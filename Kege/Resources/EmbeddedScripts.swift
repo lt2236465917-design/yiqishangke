@@ -224,6 +224,66 @@ enum EmbeddedScripts {
     })();
     """
 
+    /// Prefer weekly-grid `<table>` nodes across frameset / iframe children.
+    static let extractScheduleTables = """
+    (function() {
+      const seen = [];
+      const tables = [];
+      const scoreOf = (url, text, html) => {
+        const blob = (url || "") + (text || "") + (html || "");
+        let n = 0;
+        if (blob.indexOf("周一") !== -1 && (blob.indexOf("周二") !== -1 || blob.indexOf("周日") !== -1)) n += 6;
+        if (blob.indexOf("上午课") !== -1 || blob.indexOf("下午课") !== -1 || blob.indexOf("晚上课") !== -1) n += 6;
+        if (blob.indexOf("第一节") !== -1 || blob.indexOf("第1节") !== -1) n += 4;
+        if (blob.indexOf("课程编号") !== -1 && blob.indexOf("课程名称") !== -1) n += 5;
+        if (blob.indexOf("新学期课表") !== -1) n += 3;
+        if (blob.indexOf("上课时间") !== -1) n += 2;
+        return n;
+      };
+      const walk = (win) => {
+        try {
+          const url = win.location.href;
+          if (seen.indexOf(url) !== -1) return;
+          seen.push(url);
+          const doc = win.document;
+          Array.from(doc.querySelectorAll("table")).forEach((t) => {
+            const text = t.innerText || "";
+            const html = t.outerHTML || "";
+            const s = scoreOf(url, text, html);
+            if (s > 0 && html.length > 40) {
+              tables.push({ url: url, html: html, innerText: text, score: s });
+            }
+          });
+          const kids = [];
+          try { for (let i = 0; i < win.frames.length; i += 1) kids.push(win.frames[i]); } catch (e) {}
+          try {
+            doc.querySelectorAll("iframe, frame").forEach((el) => {
+              try { if (el.contentWindow) kids.push(el.contentWindow); } catch (e2) {}
+            });
+          } catch (e) {}
+          kids.forEach((child) => { try { walk(child); } catch (e3) {} });
+        } catch (e) {}
+      };
+      walk(window);
+      tables.sort((a, b) => b.score - a.score);
+      let html = "";
+      let innerText = "";
+      tables.forEach((t) => {
+        html += "\\n<!-- table:" + t.url + " score:" + t.score + " -->\\n" + t.html;
+        innerText += "\\n" + (t.innerText || "");
+      });
+      const best = tables[0] || {};
+      return {
+        url: best.url || location.href,
+        title: document.title || "",
+        html: html,
+        innerText: innerText,
+        tableCount: tables.length,
+        bestScore: best.score || 0
+      };
+    })();
+    """
+
     /// Click left-nav 「我的课表」 inside the graduate frameset. Never clicks 登录.
     static let openMyTimetable = """
     (function() {

@@ -83,6 +83,49 @@ struct MultimodalAIEngine: Sendable {
     合并去重后只返回一个 JSON。
     """
 
+    static let textUserPrompt = """
+    下面是研究生「我的课表」网页表格的纯文本（不是截图）。按行（第N节或上午课/下午课/晚上课，优先左侧 HH:MM）和列（周一…周日）提取真实课程。
+    忽略导航、表头、损坏的 i18n 键。同一格多门课拆开。只返回一个 JSON 数组。
+    """
+
+    /// Text-only cleanup. Never sends images or school credentials.
+    func recognizeTimetable(plainText: String) async throws -> String {
+        guard configuration.isUsable else { throw ScreenshotImporterError.missingAPIKey }
+        let clipped = String(plainText.prefix(14000))
+        guard !clipped.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw ScreenshotImporterError.emptyRecognition
+        }
+        guard let url = configuration.chatCompletionsURL else { throw ScreenshotImporterError.aiRejected }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 90
+
+        let body: [String: Any] = [
+            "model": configuration.resolvedModel,
+            "temperature": 0,
+            "messages": [
+                ["role": "system", "content": Self.systemPrompt],
+                ["role": "user", "content": Self.textUserPrompt + "\n\n" + clipped]
+            ]
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        SafeLog.info("Sending timetable plain text to developer endpoint (no images, no credentials)")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw ScreenshotImporterError.aiRejected
+        }
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = object["choices"] as? [[String: Any]],
+              let message = choices.first?["message"] as? [String: Any],
+              let contentText = message["content"] as? String else {
+            throw ScreenshotImporterError.aiRejected
+        }
+        return normalizeJSON(contentText)
+    }
+
     private func normalizeJSON(_ content: String) -> String {
         var text = content.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.hasPrefix("```") {

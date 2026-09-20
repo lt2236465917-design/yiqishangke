@@ -9,7 +9,7 @@
 2. 若落到欢迎/个人中心（`/portal` 但不是 `#/appList`）：改 hash / 点「应用列表」/ 再 load **一次** `https://iam.zgysyjy.org.cn/portal/#/appList`。等 SPA 渲染出磁贴。
 3. 用户点「进入研究生系统」：脚本点「研究生综合管理」（可部分匹配）。`window.open` / 空窗口跟到 IAM SSO，再跳 `wxt.zgysyjy.org.cn:7792`。同一 `WKProcessPool` + 非持久 `WKWebsiteDataStore` 共用 Cookie。**禁止**程序自己 load 无 query 的 `frameset.jsp`。
 4. SSO 落地研究生 frameset 且不是「请登录」：尝试点左侧「我的课表」，并用 `scrollIntoView` / 轻微 `pageZoom` 把菜单滚入视野。点不到则横幅「请点左侧「我的课表」，再点「录入课表」」。
-5. 「录入课表」截取 WebView 可见周课表（可补一张下滚快照），走与截图导入相同的多模态 JSON；失败最多 5 次，按课名+星期+时间+教室+周次合并去重。弹出核对清单，用户确认后才写入。不用嘈杂 HTML 文本作为主路径。
+5. 「录入课表」优先抽取 frameset/iframe 里的周课表 HTML 表格并结构化解析；只有表格为空才允许一次截图识图兜底。核对清单确认后才写入。
 
 `window.open` 有具体 URL 时在同一 WebView 打开；`about:blank` 再跳转则用子 WebView，仍共用进程 Cookie。
 
@@ -93,7 +93,7 @@
 4. 登录后若落到欢迎/个人中心，**自动打开一次** `/portal/#/appList`（改 hash，必要时再 load）。不要打开裸 frameset。个人中心没有磁贴。
 5. 「进入研究生系统」只在真正的应用列表顶栏出现（与右上角「录入课表」并存）。不要在 WebView 底部再叠一套按钮。欢迎页只显示一条说明，应用自动打开一次 appList。
 6. 磁贴失败或研究生页「请登录」：明确提示改用截图，不再跳裸 frameset
-7. 「录入课表」截取可见周课表 → 与截图导入相同的识图 JSON → 核对清单 → 用户确认写入。失败最多 5 次。
+7. 「录入课表」优先 HTML/DOM 周课表 → 核对清单 → 用户确认写入。表格失败才一次截图兜底。相册 DeepSeek 仍在导入页。
 
 若 IAM 在真机也打不开，或登录后找不到课表页：用 **截图导入**。应用不会做云端代登。
 

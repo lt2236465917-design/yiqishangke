@@ -41,6 +41,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     private var urlObservations: [NSKeyValueObservation] = []
     private let processPool = WKProcessPool()
     private let dataStore = WKWebsiteDataStore.nonPersistent()
+    private let parser = ZgysyjyParser()
 
     static let desktopSafariUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
 
@@ -452,88 +453,163 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         await captureVisibleSchedule()
     }
 
-    /// Snapshot the visible weekly grid and run the same multimodal JSON path as screenshot import.
-    /// HTML scrape is not the primary path. Never auto-writes.
+    /// Primary: HTML/DOM tables in frameset children. Snapshot vision is a one-shot fallback.
+    /// Never auto-writes.
     func captureVisibleSchedule() async {
         phase = .parsing
         captureEngine = ""
-        captureAttempt = 0
-        var collected: [ParsedClassDraft] = []
-        var lastError: String?
-        var lastEngine = ""
-        var lastExcerpt = ""
-        let importer = ScreenshotImporter()
-        let maxAttempts = ScreenshotImporterError.maxAttempts
+        captureAttempt = 1
+        timetableHint = "正在从网页表格提取课表。识别后需你核对，不会自动写入。"
+        await revealMyTimetableMenu(from: activeWebView)
+        await revealWeeklyGrid(from: activeWebView)
+        try? await Task.sleep(nanoseconds: 280_000_000)
 
-        for attempt in 1...maxAttempts {
-            captureAttempt = attempt
-            timetableHint = "正在截取可见课表并识别（第 \(attempt)/\(maxAttempts) 次）。识别后需你核对，不会自动写入。"
-            await revealMyTimetableMenu(from: activeWebView)
-            await revealWeeklyGrid(from: activeWebView)
-            try? await Task.sleep(nanoseconds: 280_000_000)
-
-            let images: [UIImage]
-            do {
-                images = try await snapshotScheduleViews()
-            } catch {
-                lastError = error.localizedDescription
-                SafeLog.error("Snapshot attempt=\(attempt): \(error.localizedDescription)")
-                continue
-            }
-            guard !images.isEmpty else {
-                lastError = "未能截取 WebView 画面"
-                continue
-            }
-
-            do {
-                let outcome = try await importer.importImages(images)
-                collected.append(contentsOf: outcome.result.classes)
-                lastEngine = outcome.engine
-                lastExcerpt = outcome.result.rawExcerpt ?? ""
-                let merged = WeeklyGridOCRParser.mergeAndDedupe(collected)
-                if !merged.isEmpty {
-                    captureEngine = lastEngine
-                    phase = .parsed(
-                        ParseResult(
-                            classes: merged,
-                            sourceDescription: "\(outcome.result.sourceDescription) portal-snapshot attempt=\(attempt)/\(maxAttempts)",
-                            blocker: nil,
-                            rawExcerpt: lastExcerpt
-                        )
-                    )
-                    timetableHint = "请核对清单后再写入。识别不会自动改本机课表。"
-                    SafeLog.info("Portal capture classes=\(merged.count) attempt=\(attempt) engine=\(lastEngine)")
-                    return
-                }
-            } catch {
-                lastError = error.localizedDescription
-                SafeLog.error("Portal capture attempt=\(attempt): \(error.localizedDescription)")
-            }
-        }
-
-        let merged = WeeklyGridOCRParser.mergeAndDedupe(collected)
-        if !merged.isEmpty {
-            captureEngine = lastEngine
-            phase = .parsed(
-                ParseResult(
-                    classes: merged,
-                    sourceDescription: "portal-snapshot merged-retries",
-                    blocker: nil,
-                    rawExcerpt: lastExcerpt
-                )
+        let payload: ExtractedPage
+        do {
+            payload = try await extractScheduleDOM()
+        } catch {
+            SafeLog.error("DOM extract: \(error.localizedDescription)")
+            await finishCaptureWithOptionalSnapshotFallback(
+                reason: "无法读取课表网页：\(error.localizedDescription)",
+                loginWall: false
             )
-            timetableHint = "请核对清单后再写入。识别不会自动改本机课表。"
             return
         }
 
-        let detail = lastError ?? ScreenshotImporterError.emptyRecognition.localizedDescription
-        let message = ScreenshotImporterError.retriesExhausted(
-            attempted: maxAttempts,
-            last: detail
-        ).localizedDescription
+        let blob = payload.html + (payload.innerText ?? "")
+        if Self.isLoginWallText(blob) {
+            let message = Self.loginWallHint
+            phase = .failed(message)
+            timetableHint = message
+            SafeLog.info("Portal HTML extract hit login wall")
+            return
+        }
+
+        var parsed = parser.parse(html: payload.html, pageURL: payload.url, innerText: payload.innerText)
+        parsed.classes = WeeklyGridOCRParser.mergeAndDedupe(parsed.classes)
+        var engine = "HTML 周课表"
+
+        if shouldTryTextCleanup(parsed, pageText: payload.innerText ?? blob) {
+            if let cleaned = await textOnlyLLMDrafts(from: payload.innerText ?? payload.html) {
+                let merged = WeeklyGridOCRParser.mergeAndDedupe(parsed.classes + cleaned)
+                if !merged.isEmpty {
+                    parsed.classes = merged
+                    engine = "HTML + 文本整理"
+                }
+            }
+        }
+
+        if !parsed.classes.isEmpty, !looksCollapsedToMorningBand(parsed.classes, pageText: payload.innerText ?? blob) {
+            finishCaptureSuccess(parsed, engine: engine)
+            return
+        }
+        if !parsed.classes.isEmpty {
+            finishCaptureSuccess(parsed, engine: engine)
+            return
+        }
+
+        await finishCaptureWithOptionalSnapshotFallback(
+            reason: parsed.blocker ?? "网页表格未解析到课程。请确认已打开「我的课表」，或改用导入页截图。",
+            loginWall: false
+        )
+    }
+
+    private func extractScheduleDOM() async throws -> ExtractedPage {
+        do {
+            let raw = try await activeWebView.evaluateJavaScript(EmbeddedScripts.extractScheduleTables)
+            let tables = decodeExtract(raw)
+            if !tables.html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                SafeLog.info("Extracted schedule tables")
+                return tables
+            }
+        } catch {
+            SafeLog.error("extractScheduleTables: \(error.localizedDescription)")
+        }
+        let raw = try await activeWebView.evaluateJavaScript(EmbeddedScripts.extractPage)
+        return decodeExtract(raw)
+    }
+
+    private func shouldTryTextCleanup(_ parsed: ParseResult, pageText: String) -> Bool {
+        if parsed.classes.isEmpty { return true }
+        return looksCollapsedToMorningBand(parsed.classes, pageText: pageText)
+    }
+
+    private func looksCollapsedToMorningBand(_ drafts: [ParsedClassDraft], pageText: String) -> Bool {
+        guard drafts.count >= 2 else { return false }
+        let starts = Set(drafts.map(\.startMinutes))
+        let onlyMorning = starts.count == 1 && starts.contains(9 * 60)
+        let pageHasOtherBands = pageText.contains("下午课") || pageText.contains("晚上课")
+            || pageText.contains("13:30") || pageText.contains("19:00")
+        return onlyMorning && pageHasOtherBands
+    }
+
+    private func textOnlyLLMDrafts(from text: String) async -> [ParsedClassDraft]? {
+        do {
+            guard let config = try CredentialsStore.shared.loadAIConfiguration(), config.isUsable else {
+                return nil
+            }
+            let engine = MultimodalAIEngine(configuration: config)
+            let json = try await engine.recognizeTimetable(plainText: text)
+            var drafts = TimetableHeuristics.drafts(fromStructuredJSON: json)
+            if drafts.isEmpty {
+                drafts = TimetableHeuristics.drafts(fromPlainText: json)
+            }
+            return WeeklyGridOCRParser.mergeAndDedupe(drafts)
+        } catch {
+            SafeLog.error("Text-only timetable cleanup: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    private func finishCaptureSuccess(_ parsed: ParseResult, engine: String) {
+        captureEngine = engine
+        let result = ParseResult(
+            classes: parsed.classes,
+            sourceDescription: "\(parsed.sourceDescription) portal-html",
+            blocker: nil,
+            rawExcerpt: parsed.rawExcerpt
+        )
+        phase = .parsed(result)
+        timetableHint = "请核对清单后再写入。识别不会自动改本机课表。"
+        SafeLog.info("Portal HTML capture classes=\(parsed.classes.count) engine=\(engine)")
+    }
+
+    private func finishCaptureWithOptionalSnapshotFallback(reason: String, loginWall: Bool) async {
+        if loginWall {
+            phase = .failed(reason)
+            timetableHint = reason
+            return
+        }
+        captureAttempt = 2
+        timetableHint = "网页表格不够用，改用一次页面截图识别…"
+        do {
+            let images = try await snapshotScheduleViews()
+            let outcome = try await ScreenshotImporter().importImages(images)
+            let merged = WeeklyGridOCRParser.mergeAndDedupe(outcome.result.classes)
+            if !merged.isEmpty {
+                captureEngine = "截图兜底 \(outcome.engine)"
+                phase = .parsed(
+                    ParseResult(
+                        classes: merged,
+                        sourceDescription: "\(outcome.result.sourceDescription) portal-snapshot-fallback",
+                        blocker: nil,
+                        rawExcerpt: outcome.result.rawExcerpt
+                    )
+                )
+                timetableHint = "请核对清单后再写入。这次用了截图兜底，优先仍应以网页课表为准。"
+                SafeLog.info("Portal snapshot fallback classes=\(merged.count)")
+                return
+            }
+        } catch {
+            SafeLog.error("Snapshot fallback: \(error.localizedDescription)")
+        }
+        let message = reason + " 也可关闭后到「导入」用课表截图。"
         phase = .failed(message)
         timetableHint = message
-        SafeLog.info("Portal capture failed after \(maxAttempts) attempts")
+    }
+
+    private static func isLoginWallText(_ text: String) -> Bool {
+        text.contains("请登录") || text.contains("数据处理出现错误")
     }
 
     private func snapshotScheduleViews() async throws -> [UIImage] {
@@ -602,6 +678,20 @@ final class LoginWebViewSession: NSObject, ObservableObject {
             phase = .readyToParse
             SafeLog.error("Auto-fill script error: \(error.localizedDescription)")
         }
+    }
+
+    private struct ExtractedPage {
+        var url: URL?
+        var html: String
+        var innerText: String?
+    }
+
+    private func decodeExtract(_ raw: Any?) -> ExtractedPage {
+        let dict = Self.dictionary(from: raw)
+        let url = (dict["url"] as? String).flatMap(URL.init(string:))
+        let html = dict["html"] as? String ?? ""
+        let text = dict["innerText"] as? String
+        return ExtractedPage(url: url, html: html, innerText: text)
     }
 
     private static func dictionary(from raw: Any?) -> [String: Any] {

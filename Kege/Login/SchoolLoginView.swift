@@ -3,7 +3,7 @@ import SwiftUI
 
 struct SchoolLoginView: View {
     /// Shown in the login banner so a stale App install is obvious.
-    static let loginSheetStamp = "4fd2d7b"
+    static let loginSheetStamp = "PENDING"
 
     @ObservedObject var session: LoginWebViewSession
     @EnvironmentObject private var settings: SettingsStore
@@ -138,8 +138,9 @@ struct SchoolLoginView: View {
             }
             return "进入课表页后，点右上角「录入课表」。"
         case .parsing:
-            let attempt = max(session.captureAttempt, 1)
-            return "正在截取可见周课表并识别（第 \(attempt)/\(ScreenshotImporterError.maxAttempts) 次）。不会自动写入。"
+            return session.timetableHint.isEmpty
+                ? "正在从网页表格提取课表。不会自动写入。"
+                : session.timetableHint
         case .parsed(let result):
             if result.classes.isEmpty {
                 return result.blocker ?? "未识别到课程。可换页后再点右上角「录入课表」。"
