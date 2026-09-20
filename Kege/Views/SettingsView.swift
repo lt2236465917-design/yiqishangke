@@ -9,8 +9,8 @@ struct SettingsView: View {
     @State private var password = ""
     @State private var hasSavedCredentials = false
     @State private var aiKey = ""
-    @State private var aiBase = AIVisionConfiguration.deepseekBaseURL
-    @State private var aiModel = AIVisionConfiguration.deepseekModel
+    @State private var aiBase = AIVisionConfiguration.defaultBaseURL
+    @State private var aiModel = AIVisionConfiguration.defaultModel
     @State private var hasAIKey = false
     @State private var banner: String?
 
@@ -122,7 +122,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("开发者识图（可选）")
                 .font(KegeTheme.titleFont)
-            Text("默认 DeepSeek（`https://api.deepseek.com`，模型 `deepseek-flash`，官方识图）。有 Key 时截图导入走多模态 JSON；没 Key 才用本机 OCR。请求只发课表图片，不发学校账号。不要把 Key 提交进 git。可改成其它 OpenAI 兼容接口。")
+            Text("空表默认是 DeepSeek：`https://api.deepseek.com` + `deepseek-flash`（官方识图）。三项都可改，下次请求只读你保存的钥匙串，不必重装应用。有 Key 走多模态 JSON；没 Key 才用本机 OCR。请求只发课表图片。不要把 Key 提交进 git。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             KegeCard {
@@ -139,7 +139,7 @@ struct SettingsView: View {
                         Button("删除 Key", role: .destructive, action: deleteAI)
                     }
                 }
-                Text(hasAIKey ? "已保存开发者 Key（已隐藏）" : "未配置，将使用 Vision OCR")
+                Text(hasAIKey ? "已保存开发者 Key（已隐藏）" : "未配置，截图导入将使用本机 Vision OCR")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -226,8 +226,8 @@ struct SettingsView: View {
         do {
             try CredentialsStore.shared.deleteAIConfiguration()
             aiKey = ""
-            aiBase = AIVisionConfiguration.deepseekBaseURL
-            aiModel = AIVisionConfiguration.deepseekModel
+            aiBase = AIVisionConfiguration.defaultBaseURL
+            aiModel = AIVisionConfiguration.defaultModel
             hasAIKey = false
             banner = "已删除识图 Key"
         } catch {

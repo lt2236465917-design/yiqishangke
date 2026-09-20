@@ -90,11 +90,11 @@ actor ScreenshotImporter {
             return ImportOutcome(
                 result: ParseResult(
                     classes: merged,
-                    sourceDescription: "deepseek-vision x\(images.count)",
+                    sourceDescription: "vision-llm \(aiConfig.model) x\(images.count)",
                     blocker: nil,
                     rawExcerpt: String(pair.1.prefix(600))
                 ),
-                engine: "DeepSeek / 多模态"
+                engine: "多模态 \(aiConfig.model)"
             )
         }
 

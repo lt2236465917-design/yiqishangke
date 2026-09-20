@@ -40,7 +40,7 @@ Bundle ID：
 
 不要提交 Key。任选其一：
 
-- 设置页写入钥匙串（默认 DeepSeek：`https://api.deepseek.com`，模型 `deepseek-flash`，官方识图；可改成其它 OpenAI 兼容接口）。
+- 设置页写入钥匙串。空表默认 DeepSeek：`https://api.deepseek.com` + `deepseek-flash`（官方识图）。Key / 根路径 / 模型三项可改，运行时只读钥匙串。
 - 复制 `Config/Secrets.example.plist` 为 `Config/Secrets.local.plist`（已 gitignore），填 `AI_API_KEY`，再把该文件加进 App target。启动时会吸入钥匙串。
 
 识图请求 **只发课表图片**，不发学校账号、密码或 Cookie。

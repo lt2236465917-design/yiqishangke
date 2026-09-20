@@ -19,8 +19,9 @@ struct AIVisionConfiguration: Equatable, Sendable {
     var baseURL: String
     var model: String
 
-    static let deepseekBaseURL = "https://api.deepseek.com"
-    static let deepseekModel = "deepseek-flash"
+    /// Empty-field defaults only. Runtime always uses Keychain / Settings values.
+    static let defaultBaseURL = "https://api.deepseek.com"
+    static let defaultModel = "deepseek-flash"
 
     var isUsable: Bool { !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 }
@@ -111,8 +112,8 @@ final class CredentialsStore: @unchecked Sendable {
             let model = (plist["AI_MODEL"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let config = AIVisionConfiguration(
                 apiKey: key,
-                baseURL: (base?.isEmpty == false ? base! : AIVisionConfiguration.deepseekBaseURL),
-                model: (model?.isEmpty == false ? model! : AIVisionConfiguration.deepseekModel)
+                baseURL: (base?.isEmpty == false ? base! : AIVisionConfiguration.defaultBaseURL),
+                model: (model?.isEmpty == false ? model! : AIVisionConfiguration.defaultModel)
             )
             try? saveAIConfiguration(config)
             SafeLog.info("Ingested developer AI key from local plist (not logged)")

@@ -15,7 +15,8 @@ struct MultimodalAIEngine: Sendable {
         guard !jpegs.isEmpty else { throw ScreenshotImporterError.invalidImage }
 
         let root = configuration.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URL(string: "\(root)/chat/completions") else { throw ScreenshotImporterError.aiRejected }
+        let completions = root.hasSuffix("/chat/completions") ? root : "\(root)/chat/completions"
+        guard let url = URL(string: completions) else { throw ScreenshotImporterError.aiRejected }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -62,9 +63,8 @@ struct MultimodalAIEngine: Sendable {
 
     static let systemPrompt = """
     你是课表结构化助手。根据研究生「我的课表」周课表截图提取课程。
-    只返回 JSON，不要 markdown，不要解释。
-    根对象必须是：{"classes":[...]}
-    每项字段：
+    只返回 JSON 数组，不要 markdown，不要解释。
+    数组元素字段：
     - title (string, 必填)
     - teacher (string, 可空)
     - weekday (1-7 或 周一…周日, 必填；1=周一)
