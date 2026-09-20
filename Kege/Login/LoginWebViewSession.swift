@@ -19,6 +19,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     @Published var currentURL: URL?
     @Published var didAttemptAutoFill = false
     @Published private(set) var isOnAppList = false
+    @Published private(set) var isOnWelcome = false
     @Published private(set) var isOnGraduateFrameset = false
     @Published private(set) var timetableHint = ""
     /// Tile click failed or graduate page is a login wall. Never auto-jump to naked frameset.
@@ -32,6 +33,9 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     private var didClickMyTimetable = false
     /// Set only when the user taps 「进入研究生系统」 while not yet on appList.
     private var pendingGraduateTileClick = false
+    /// IAM welcome/user-center → appList, at most once per session.
+    private var didRedirectToAppList = false
+    private var appListRedirectInFlight = false
     private var urlObservations: [NSKeyValueObservation] = []
 
     static let desktopSafariUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
@@ -68,7 +72,10 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         didAttemptAutoFill = false
         didClickMyTimetable = false
         pendingGraduateTileClick = false
+        didRedirectToAppList = false
+        appListRedirectInFlight = false
         isOnAppList = false
+        isOnWelcome = false
         isOnGraduateFrameset = false
         timetableHint = ""
         ssoBlocked = false
@@ -82,21 +89,32 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         Task { await openGraduateViaPortalSSO() }
     }
 
+    /// User retry from welcome/user-center. Does not click the graduate tile.
+    func openApplicationList() {
+        Task {
+            didRedirectToAppList = true
+            await navigateToAppList(in: activeWebView)
+        }
+    }
+
     /// Never loads naked frameset. Stays on / returns to appList, then clicks the portal tile for SSO.
     private func openGraduateViaPortalSSO() async {
         didClickMyTimetable = false
         ssoBlocked = false
         await syncURLFromPage(activeWebView)
-        let url = currentURL ?? activeWebView.url
-        if PortalNavigation.isAppList(url) {
+        if PortalNavigation.isAppList(currentURL ?? activeWebView.url) {
             await clickGraduateTile(from: activeWebView)
             return
         }
         pendingGraduateTileClick = true
-        timetableHint = Self.appListSSOHint
+        timetableHint = Self.openingAppListHint
         phase = .readyToParse
-        SafeLog.info("Not on appList; loading portal appList for SSO tile click (not frameset)")
-        loadSchoolPage(SchoolParser.portalAppListURL, in: webView)
+        SafeLog.info("Not on appList; opening portal appList for SSO tile click (not frameset)")
+        await navigateToAppList(in: webView)
+        await syncURLFromPage(webView)
+        if PortalNavigation.isAppList(currentURL ?? webView.url) {
+            await clickGraduateTile(from: webView)
+        }
     }
 
     /// Programmatic loads never touch naked `frameset.jsp`. Hash-router landings still update the banner.
@@ -120,16 +138,22 @@ final class LoginWebViewSession: NSObject, ObservableObject {
 
     private func handleObservedURL(_ url: URL?) {
         remember(url: url)
-        guard PortalNavigation.isAppList(url) else { return }
-        switch phase {
-        case .parsed, .parsing, .failed, .needsManualAuth:
-            break
-        default:
-            phase = .readyToParse
+        if PortalNavigation.isAppList(url) {
+            switch phase {
+            case .parsed, .parsing, .failed, .needsManualAuth:
+                break
+            default:
+                phase = .readyToParse
+            }
+            return
+        }
+        if PortalNavigation.isIAMPostLogin(url) {
+            Task { await maybeOpenAppListAfterLogin(from: webView) }
         }
     }
 
     static let appListSSOHint = "请点应用列表里的研究生综合管理；直达裸开会丢登录态"
+    static let openingAppListHint = "已登录。正在打开应用列表（个人中心没有研究生磁贴）。"
     static let tileClickFailedHint = "未能点开「研究生综合管理」。请亲手点应用列表里的磁贴。点不开或出现「请登录」时，请关闭本页，改用「导入」里的截图。"
     static let loginWallHint = "研究生系统在要登录，说明没带上门户会话。不要直达裸 frameset。请关闭本页，改用「导入」里的截图。"
 
@@ -142,9 +166,12 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     private func remember(url: URL?) {
         currentURL = url
         isOnAppList = PortalNavigation.isAppList(url)
+        isOnWelcome = PortalNavigation.isIAMPostLogin(url)
         isOnGraduateFrameset = PortalNavigation.isGraduateFrameset(url)
         if isOnAppList, !ssoBlocked {
             timetableHint = Self.appListSSOHint
+        } else if isOnWelcome, !ssoBlocked, !didRedirectToAppList {
+            timetableHint = Self.openingAppListHint
         }
     }
 
@@ -155,6 +182,86 @@ final class LoginWebViewSession: NSObject, ObservableObject {
             return
         }
         remember(url: webView.url)
+    }
+
+    /// After IAM login, welcome/user-center has no graduate tile. Open appList once. Never frameset.
+    private func maybeOpenAppListAfterLogin(from webView: WKWebView) async {
+        if didRedirectToAppList || appListRedirectInFlight { return }
+        if PortalNavigation.isAppList(webView.url) || PortalNavigation.isAppList(currentURL) { return }
+        if PortalNavigation.isLoginPage(webView.url) || PortalNavigation.isLoginPage(currentURL) { return }
+        if PortalNavigation.isGraduateHost(webView.url) || PortalNavigation.isGraduateFrameset(webView.url) { return }
+        guard PortalNavigation.isIAMHost(webView.url) || PortalNavigation.isIAMHost(currentURL) else { return }
+
+        appListRedirectInFlight = true
+        defer { appListRedirectInFlight = false }
+
+        await syncURLFromPage(webView)
+        let url = currentURL ?? webView.url
+        if PortalNavigation.isAppList(url) { return }
+        if PortalNavigation.isLoginPage(url) { return }
+        if PortalNavigation.isGraduateHost(url) || PortalNavigation.isGraduateFrameset(url) { return }
+        if let url, PortalNavigation.looksLikeSSOEntry(url) { return }
+        guard PortalNavigation.isIAMHost(url) else { return }
+
+        let loggedIn = await detectLoggedInIAM(from: webView)
+        let welcomeURL = PortalNavigation.isIAMPostLogin(url)
+        guard loggedIn || welcomeURL else { return }
+
+        didRedirectToAppList = true
+        timetableHint = Self.openingAppListHint
+        phase = .readyToParse
+        SafeLog.info("IAM login landed off appList; opening portal hash appList once")
+        await navigateToAppList(in: webView)
+    }
+
+    private func detectLoggedInIAM(from webView: WKWebView) async -> Bool {
+        do {
+            let raw = try await webView.evaluateJavaScript(EmbeddedScripts.detectIAMSession)
+            let dict = Self.dictionary(from: raw)
+            if dict["loginForm"] as? Bool == true { return false }
+            if dict["hasAppListHash"] as? Bool == true { return false }
+            if dict["welcome"] as? Bool == true { return true }
+            if dict["logout"] as? Bool == true { return true }
+        } catch {
+            SafeLog.error("IAM session script: \(error.localizedDescription)")
+        }
+        return await hasIAMCookies(from: webView) && PortalNavigation.isIAMPostLogin(currentURL ?? webView.url)
+    }
+
+    private func hasIAMCookies(from webView: WKWebView) async -> Bool {
+        await withCheckedContinuation { continuation in
+            webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
+                let hit = cookies.contains { cookie in
+                    let domain = cookie.domain.lowercased()
+                    return domain.contains("iam.zgysyjy.org.cn") || domain.hasSuffix("zgysyjy.org.cn")
+                }
+                continuation.resume(returning: hit)
+            }
+        }
+    }
+
+    private func navigateToAppList(in webView: WKWebView) async {
+        if PortalNavigation.isBareGraduateFrameset(webView.url) { return }
+        timetableHint = Self.openingAppListHint
+        do {
+            let raw = try await webView.evaluateJavaScript(EmbeddedScripts.goToAppList)
+            let dict = Self.dictionary(from: raw)
+            SafeLog.info("appList hash method=\(dict["method"] as? String ?? "")")
+        } catch {
+            SafeLog.error("appList hash script: \(error.localizedDescription)")
+        }
+        for _ in 0..<8 {
+            try? await Task.sleep(nanoseconds: 280_000_000)
+            await syncURLFromPage(webView)
+            if PortalNavigation.isAppList(currentURL ?? webView.url) {
+                timetableHint = Self.appListSSOHint
+                phase = .readyToParse
+                SafeLog.info("Landed on portal appList")
+                return
+            }
+        }
+        SafeLog.info("Hash did not stick; loading portal appList URL (not frameset)")
+        loadSchoolPage(SchoolParser.portalAppListURL, in: webView)
     }
 
     private func clickGraduateTile(from webView: WKWebView) async {
@@ -392,6 +499,7 @@ extension LoginWebViewSession: WKNavigationDelegate {
                 await attemptAutoFillIfNeeded()
             }
             await finishPendingTileClickIfNeeded(from: webView)
+            await maybeOpenAppListAfterLogin(from: webView)
             let loginWall = await detectGraduateLoginWall(from: webView)
             if !loginWall, !ssoBlocked {
                 await openMyTimetableIfPossible(from: webView)
@@ -473,6 +581,10 @@ enum PortalNavigation {
         return url.host?.isEmpty == false
     }
 
+    static func isIAMHost(_ url: URL?) -> Bool {
+        (url?.host?.lowercased() ?? "").contains("iam.zgysyjy.org.cn")
+    }
+
     static func isLoginPage(_ url: URL?) -> Bool {
         guard let url else { return false }
         let path = url.path.lowercased()
@@ -487,18 +599,31 @@ enum PortalNavigation {
         ZgysyjyParser.isGraduateHost(url)
     }
 
+    /// Real application list only. `/portal` welcome/user-center is not appList.
     static func isAppList(_ url: URL?) -> Bool {
         guard let url else { return false }
         if isLoginPage(url) || isGraduateFrameset(url) || isGraduateHost(url) { return false }
-        let blob = (url.absoluteString + " " + url.path + " " + (url.fragment ?? "")).lowercased()
-        return blob.contains("applist") || blob.contains("app-list") || blob.contains("/portal")
+        let fragment = (url.fragment ?? "").lowercased()
+        let path = url.path.lowercased()
+        let abs = url.absoluteString.lowercased()
+        return fragment.contains("applist")
+            || fragment.contains("app-list")
+            || path.contains("applist")
+            || path.contains("app-list")
+            || abs.contains("#/applist")
+            || abs.contains("#/app-list")
+    }
+
+    /// Logged-in IAM page that is not the application list (welcome / user-center / portal shell).
+    static func isIAMPostLogin(_ url: URL?) -> Bool {
+        guard isIAMHost(url), !isLoginPage(url), !isAppList(url) else { return false }
+        if isGraduateHost(url) || isGraduateFrameset(url) { return false }
+        if let url, looksLikeSSOEntry(url) { return false }
+        return true
     }
 
     static func isSchoolPortal(_ url: URL?) -> Bool {
-        guard let url, let host = url.host?.lowercased() else { return false }
-        guard isAllowedHost(host) else { return false }
-        if isLoginPage(url) || isGraduateFrameset(url) || isGraduateHost(url) { return false }
-        return isAppList(url)
+        isAppList(url) || isIAMPostLogin(url)
     }
 
     /// Ticketed / oauth hops are OK. Bare frameset.jsp without query is not an SSO entry.

@@ -351,4 +351,63 @@ enum EmbeddedScripts {
       };
     })();
     """
+
+    /// Logged-in IAM personal/welcome page — not the application list.
+    static let detectIAMSession = """
+    (function() {
+      const t = ((document.body && document.body.innerText) || "") + (document.title || "");
+      const href = String(location.href);
+      const hasPassword = !!document.querySelector('input[type="password"]');
+      return {
+        href: href,
+        welcome: t.indexOf("欢迎您") !== -1 || t.indexOf("欢迎你") !== -1,
+        logout: t.indexOf("安全退出") !== -1 || t.indexOf("退出登录") !== -1 || t.indexOf("注销") !== -1 || t.indexOf("退出") !== -1,
+        loginForm: hasPassword,
+        hasAppListHash: /applist|app-list/i.test(href),
+        excerpt: t.replace(/\\s+/g, " ").slice(0, 80)
+      };
+    })();
+    """
+
+    /// Hash SPA: switch portal from user-center/welcome to #/appList. Never opens frameset.
+    static let goToAppList = """
+    (function() {
+      const targetHash = "#/appList";
+      const target = "https://iam.zgysyjy.org.cn/portal/#/appList";
+      const hrefNow = String(location.href);
+      if (/applist|app-list/i.test(hrefNow)) {
+        return { method: "already", href: hrefNow };
+      }
+      const clickNav = () => {
+        const nodes = Array.from(document.querySelectorAll("a, button, li, span, div, [role='menuitem'], [role='tab']"));
+        for (const el of nodes) {
+          const t = ((el.innerText || el.textContent || "") + "").replace(/\\s+/g, "");
+          if (!t || t.length > 16) continue;
+          if (t === "应用列表" || t === "我的应用" || t === "应用中心" || t.indexOf("应用列表") !== -1) {
+            try { el.click(); return true; } catch (e) {}
+          }
+        }
+        return false;
+      };
+      let method = "";
+      try { if (clickNav()) method = "nav-click"; } catch (e) {}
+      try {
+        location.hash = targetHash;
+        method = method || "hash";
+      } catch (e2) {}
+      try {
+        history.replaceState(null, "", "/portal/" + targetHash);
+        window.dispatchEvent(new HashChangeEvent("hashchange"));
+        window.dispatchEvent(new PopStateEvent("popstate"));
+        method = method || "replaceState";
+      } catch (e3) {}
+      if (!/applist|app-list/i.test(String(location.href))) {
+        try { location.assign(target); method = "assign"; } catch (e4) {
+          location.href = target;
+          method = "href";
+        }
+      }
+      return { method: method, href: String(location.href) };
+    })();
+    """
 }

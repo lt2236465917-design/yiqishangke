@@ -48,8 +48,8 @@ iPhone 课表应用：给研究生伴侣在本机查看课表、上课提醒和�
 
 1. **设置** 保存学号密码（只进本机钥匙串）。
 2. **立即同步课表** → IAM 登录页自动填登录名和密码（**不填验证码、不代点登录**）。
-3. 登录后应停在 `https://iam.zgysyjy.org.cn/portal/#/appList`，**不会**自动打开裸 `frameset.jsp`。
-4. 亲手点应用列表里的「研究生综合管理」，或用「进入研究生系统」（脚本点同一磁贴 / 真实 SSO URL）。不要自己打开 `https://wxt.zgysyjy.org.cn:7792/graduate/frameset.jsp`。
+3. 登录后若停在「欢迎您」个人中心，应用会**自动打开一次** `https://iam.zgysyjy.org.cn/portal/#/appList`（hash 路由）。个人中心没有研究生磁贴。
+4. 看到应用列表后再点「进入研究生系统」（脚本点磁贴 / 真实 SSO URL）。不要自己打开 `https://wxt.zgysyjy.org.cn:7792/graduate/frameset.jsp`。
 5. 磁贴失败或出现「请登录」：关闭，改用截图。应用不会再跳一次裸 frameset。
 6. 进入研究生系统后点左侧 **我的课表**，再点 **解析本页**，确认后再 **写入本机课表**。
 
@@ -72,7 +72,7 @@ Key / 根路径 / 模型 / 补全路径都可以改；下次请求只读钥匙�
 | 用途 | URL | 说明 |
 |---|---|---|
 | IAM 登录 | `https://iam.zgysyjy.org.cn/am/mLogin/login.html` | 已核实 |
-| 登录后应用列表 | `https://iam.zgysyjy.org.cn/portal/#/appList` | 已核实；必须停在这里走磁贴 SSO |
+| 登录后应用列表 | `https://iam.zgysyjy.org.cn/portal/#/appList` | 已核实；磁贴在这里。欢迎/个人中心不是此页 |
 | 研究生 frameset | `https://wxt.zgysyjy.org.cn:7792/graduate/frameset.jsp` | SSO **落地**页。裸开会「请登录」 |
 | 我的课表子菜单 | 未知 | 地址栏可能一直停在 frameset |
 

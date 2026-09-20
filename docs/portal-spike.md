@@ -7,9 +7,9 @@
 
 裸开 `https://wxt.zgysyjy.org.cn:7792/graduate/frameset.jsp` 会显示「请登录 / 数据处理出现错误」（用户核实）。IAM Cookie 不带到 `wxt` 主机。
 
-正确路径：IAM 登录 → **停在** `https://iam.zgysyjy.org.cn/portal/#/appList` → 点应用列表「研究生综合管理」磁贴（门户 SSO / 带 ticket 的 URL）→ 研究生系统落地 frameset → 左侧「我的课表」→「解析本页」。
+正确路径：IAM 登录 → 若落到「欢迎您」个人中心，应用**自动打开一次** `https://iam.zgysyjy.org.cn/portal/#/appList`（hash SPA）→ 点应用列表「研究生综合管理」磁贴（门户 SSO / 带 ticket 的 URL）→ 研究生系统落地 frameset → 左侧「我的课表」→「解析本页」。
 
-应用不会在登录后或 appList 上自动 `load` 裸 frameset。磁贴点失败会提示改用截图导入，不会再跳一次「请登录」页。
+`/portal` 个人中心 **不是** 应用列表。不要把欢迎页当成磁贴页。应用不会 `load` 裸 frameset。磁贴点失败会提示改用截图导入。
 
 ## 已知 URL
 
@@ -17,6 +17,7 @@
 |---|---|---|
 | IAM 登录 | `https://iam.zgysyjy.org.cn/am/mLogin/login.html` | 已核实（用户模拟器） |
 | 登录后应用列表 | `https://iam.zgysyjy.org.cn/portal/#/appList` | 已核实（用户模拟器） |
+| 登录后欢迎/个人中心 | IAM `/portal` 下非 `appList` 的 hash（如欢迎您） | 已核实（用户）：没有研究生磁贴，需转到 appList |
 | 研究生 frameset | `https://wxt.zgysyjy.org.cn:7792/graduate/frameset.jsp` | 已核实：SSO **落地**，不是可直达入口 |
 | 课表子菜单 | frameset 内左侧「我的课表」/ 子 frame | **未核实**。地址栏可能一直停在 `frameset.jsp` |
 
@@ -79,8 +80,8 @@
 1. WKWebView（桌面 Safari UA）打开 `https://iam.zgysyjy.org.cn/am/mLogin/login.html`
 2. 自动填登录名和密码（可用时先切到「用户名密码」tab），**不填验证码、不代点登录**
 3. 图形验证码由用户手输后再点登录；仅短信/二次验证页（无密码框）才整页停填
-4. 登录后**留在** `/portal/#/appList`，**不要**自动打开 frameset。横幅原文：「请点应用列表里的研究生综合管理；直达裸开会丢登录态」
-5. 「进入研究生系统」只点「研究生综合管理」磁贴或真实 SSO URL。未在 appList 时先回到门户再点。裸开 frameset 会丢登录态
+4. 登录后若落到欢迎/个人中心，**自动打开一次** `/portal/#/appList`（改 hash，必要时再 load）。不要打开裸 frameset。个人中心没有磁贴。
+5. 「进入研究生系统」只在真正的应用列表出现，点「研究生综合管理」磁贴或真实 SSO URL。欢迎页只显示「打开应用列表」。
 6. 磁贴失败或研究生页「请登录」：明确提示改用截图，不再跳裸 frameset
 7. 「解析本页」在课表页收集同域 frame / iframe，周课表 + 名单表 → `ClassSession`
 

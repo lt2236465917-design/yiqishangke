@@ -72,6 +72,9 @@ struct SchoolLoginView: View {
         if session.isOnAppList {
             return "应用列表：请点研究生综合管理"
         }
+        if session.isOnWelcome {
+            return "已登录，正在打开应用列表"
+        }
         switch session.phase {
         case .idle:
             return "准备打开学校登录页"
@@ -98,6 +101,9 @@ struct SchoolLoginView: View {
         }
         if session.isOnAppList {
             return LoginWebViewSession.appListSSOHint
+        }
+        if session.isOnWelcome {
+            return session.timetableHint.isEmpty ? LoginWebViewSession.openingAppListHint : session.timetableHint
         }
         switch session.phase {
         case .idle:
@@ -128,6 +134,7 @@ struct SchoolLoginView: View {
     private var bannerColor: Color {
         if session.ssoBlocked { return .orange }
         if session.isOnAppList { return KegeTheme.accent }
+        if session.isOnWelcome { return KegeTheme.sage }
         switch session.phase {
         case .failed:
             return KegeTheme.accent
@@ -169,15 +176,27 @@ struct SchoolLoginView: View {
     @ViewBuilder
     private var actionBar: some View {
         VStack(spacing: 10) {
-            Button {
-                session.openGraduateManagement()
-            } label: {
-                Text("进入研究生系统")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
+            if session.isOnAppList {
+                Button {
+                    session.openGraduateManagement()
+                } label: {
+                    Text("进入研究生系统")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(KegeTheme.accent)
+            } else if session.isOnWelcome {
+                Button {
+                    session.openApplicationList()
+                } label: {
+                    Text("打开应用列表")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(KegeTheme.sage)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(KegeTheme.accent)
 
             Button {
                 Task { await session.userTappedParseCurrentPage() }
