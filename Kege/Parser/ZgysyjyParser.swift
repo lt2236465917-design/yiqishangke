@@ -154,7 +154,14 @@ struct ZgysyjyParser: SchoolParsing {
     private func mergeGridPreferred(_ grid: [ParsedClassDraft], list: [ParsedClassDraft]) -> [ParsedClassDraft] {
         var result = grid
         for extra in list {
-            if let index = result.firstIndex(where: { $0.title == extra.title && $0.weekday == extra.weekday }) {
+            if extra.timePending {
+                if !result.contains(where: { $0.title == extra.title && !$0.timePending }),
+                   !result.contains(where: { $0.title == extra.title && $0.timePending }) {
+                    result.append(extra)
+                }
+                continue
+            }
+            if let index = result.firstIndex(where: { $0.title == extra.title && $0.weekday == extra.weekday && !$0.timePending }) {
                 if result[index].location.isEmpty { result[index].location = extra.location }
                 if result[index].teacher.isEmpty { result[index].teacher = extra.teacher }
                 if result[index].weeks == nil { result[index].weeks = extra.weeks }
@@ -177,14 +184,22 @@ struct ZgysyjyParser: SchoolParsing {
             guard title.count >= 2 else { continue }
             if isUnselected(cell(row, index["selected"])) { continue }
 
-            let meetings = ZgysyjyMeeting.parseCell(cell(row, meetingIdx))
-            guard !meetings.isEmpty else { continue }
-
+            let meetingText = cell(row, meetingIdx)
+            let meetings = ZgysyjyMeeting.parseCell(meetingText)
             let code = cell(row, index["code"])
             let klass = cell(row, index["class"])
             let credit = cell(row, index["credit"])
             let nature = cell(row, index["nature"])
             let notes = [code, klass, credit, nature].filter { !$0.isEmpty }.joined(separator: " · ")
+
+            if meetings.isEmpty {
+                if ZgysyjyMeeting.isPendingMeeting(meetingText, title: title) {
+                    drafts.append(
+                        TimetableHeuristics.pendingDraft(title: title, teacher: "", notes: notes)
+                    )
+                }
+                continue
+            }
 
             for meeting in meetings {
                 drafts.append(
@@ -410,12 +425,16 @@ struct HTMLTableSlice {
         return rows.isEmpty ? nil : HTMLTableSlice(rows: rows)
     }
 
+    static func anyItems(_ raw: Any?) -> [Any]? {
+        if let arr = raw as? [Any] { return arr }
+        if let arr = raw as? NSArray { return arr.map { $0 as Any } }
+        return nil
+    }
+
     static func slices(fromJavaScriptTables raw: Any?) -> [HTMLTableSlice] {
         let list: [Any]
-        if let arr = raw as? [Any] {
-            list = arr
-        } else if let arr = raw as? NSArray {
-            list = arr as [Any]
+        if let items = anyItems(raw) {
+            list = items
         } else if let dict = raw as? [String: Any], let nested = dict["tables"] {
             return slices(fromJavaScriptTables: nested)
         } else if let dict = raw as? NSDictionary, let nested = dict["tables"] {
@@ -450,24 +469,10 @@ struct HTMLTableSlice {
         } else {
             return nil
         }
-        let rowsRaw: [Any]
-        if let arr = dict["rows"] as? [Any] {
-            rowsRaw = arr
-        } else if let arr = dict["rows"] as? NSArray {
-            rowsRaw = arr as [Any]
-        } else {
-            return nil
-        }
+        guard let rowsRaw = anyItems(dict["rows"]) else { return nil }
         var reported: [[(text: String, rowspan: Int, colspan: Int)]] = []
         for row in rowsRaw {
-            let cols: [Any]
-            if let arr = row as? [Any] {
-                cols = arr
-            } else if let arr = row as? NSArray {
-                cols = arr as [Any]
-            } else {
-                continue
-            }
+            guard let cols = anyItems(row) else { continue }
             var line: [(text: String, rowspan: Int, colspan: Int)] = []
             for col in cols {
                 if let cell = col as? [String: Any] {

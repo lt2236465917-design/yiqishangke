@@ -90,7 +90,6 @@ actor ScreenshotImporter {
         let aiConfig = try credentialsStore.loadAIConfiguration()
         if let aiConfig, aiConfig.isUsable {
             let pair = try await recognizeWithAI(images, config: aiConfig)
-            let merged = WeeklyGridOCRParser.mergeAndDedupe(pair.0)
             guard !merged.isEmpty else { throw ScreenshotImporterError.emptyRecognition }
             return ImportOutcome(
                 result: ParseResult(
@@ -187,8 +186,9 @@ actor ScreenshotImporter {
         let engine = MultimodalAIEngine(configuration: config)
         let text = try await engine.recognizeTimetable(images: images)
         var drafts = TimetableHeuristics.drafts(fromStructuredJSON: text)
-        if drafts.isEmpty {
-            drafts = TimetableHeuristics.drafts(fromPlainText: text)
+        if drafts.filter({ !$0.timePending }).isEmpty {
+            let fallback = TimetableHeuristics.drafts(fromPlainText: text)
+            drafts.append(contentsOf: fallback)
         }
         drafts = WeeklyGridOCRParser.mergeAndDedupe(drafts)
         return (drafts, text)

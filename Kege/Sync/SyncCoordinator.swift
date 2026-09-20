@@ -42,7 +42,7 @@ final class SyncCoordinator: ObservableObject {
     }
 
     func applyParseResult(_ result: ParseResult, replace: Bool = true) async {
-        let sessions = result.classes.map { $0.asSession(source: .portal) }
+        let sessions = result.classes.compactMap { $0.asSession(source: .portal) }
         if sessions.isEmpty {
             lastError = result.blocker ?? "解析结果为空。"
             return

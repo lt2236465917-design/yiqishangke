@@ -80,7 +80,12 @@ enum WeeklyGridOCRParser {
         }
         var result: [ParsedClassDraft] = []
         for draft in sorted {
+            if draft.timePending {
+                result.append(draft)
+                continue
+            }
             if var last = result.last,
+               !last.timePending,
                last.title == draft.title,
                last.weekday == draft.weekday,
                last.weeks == draft.weeks,

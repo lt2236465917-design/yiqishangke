@@ -80,9 +80,18 @@ enum ZgysyjyMeeting {
         return map[raw]
     }
 
-    static func isBrokenPlaceholder(_ text: String) -> Bool {
-        let t = text.lowercased()
-        return t.contains("label.teachtask") || t.contains("week.null") || t.contains(".null-")
+    static func isPendingMeeting(_ text: String, title: String = "") -> Bool {
+        if isBrokenPlaceholder(text) { return true }
+        let compact = text.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "\n", with: "")
+        let titleCompact = title.replacingOccurrences(of: " ", with: "")
+        let keys = ["待定", "联系老师", "自行安排", "自排课", "时间地点待定", "时间、地点待定"]
+        if keys.contains(where: { compact.contains($0) || titleCompact.contains($0) }) {
+            return true
+        }
+        if titleCompact.contains("导师课") && (compact.isEmpty || parseCell(text).isEmpty) {
+            return true
+        }
+        return compact.isEmpty
     }
 
     static func periodMinutes(from token: String) -> (Int, Int)? {

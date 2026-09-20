@@ -176,7 +176,7 @@ struct SchoolLoginView: View {
                     drafts: drafts,
                     didWrite: didWrite,
                     replaceOnImport: $settings.replaceOnImport,
-                    writeEnabled: !drafts.isEmpty && !didWrite,
+                    writeEnabled: drafts.contains(where: { !$0.timePending }) && !didWrite,
                     onWrite: { applyCaptured() }
                 )
                 .padding(20)

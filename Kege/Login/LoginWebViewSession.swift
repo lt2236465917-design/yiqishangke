@@ -604,10 +604,8 @@ final class LoginWebViewSession: NSObject, ObservableObject {
             if let h = dict["html"] as? String, !h.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 htmlPieces.append(h)
             }
-            if let tables = dict["tables"] as? [Any] {
+            if let tables = HTMLTableSlice.anyItems(dict["tables"]) {
                 combined.append(contentsOf: tables)
-            } else if let tables = dict["tables"] as? NSArray {
-                combined.append(contentsOf: tables as [Any])
             }
         }
 
@@ -695,10 +693,8 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         if let html = dict["html"] as? String, !html.isEmpty {
             probeHTML.append(html)
         }
-        if let tables = dict["tables"] as? [Any] {
+        if let tables = HTMLTableSlice.anyItems(dict["tables"]) {
             probeTables.append(contentsOf: tables)
-        } else if let tables = dict["tables"] as? NSArray {
-            probeTables.append(contentsOf: tables as [Any])
         }
     }
 

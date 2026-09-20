@@ -9,9 +9,12 @@ struct ParsedClassDraft: Equatable, Sendable {
     var endMinutes: Int
     var weeks: [Int]?
     var notes: String
+    var timePending: Bool = false
 
-    func asSession(source: ClassSource) -> ClassSession {
-        ClassSession(
+    func asSession(source: ClassSource) -> ClassSession? {
+        if timePending { return nil }
+        guard endMinutes > startMinutes else { return nil }
+        return ClassSession(
             title: title,
             teacher: teacher,
             location: location,
@@ -179,95 +182,205 @@ enum TimetableHeuristics {
               let object = try? JSONSerialization.jsonObject(with: data) else {
             return []
         }
-        if let array = object as? [Any] {
-            return unique(drafts(fromJSONObject: array) + array.compactMap(draftFromFlexibleNode))
-        }
-        if let dict = object as? [String: Any] {
-            for key in ["classes", "courses", "sessions", "items", "data"] {
-                if let array = dict[key] as? [Any] {
-                    return unique(array.compactMap(draftFromFlexibleNode))
-                }
-            }
-            if let one = draftFromFlexibleNode(dict) {
-                return [one]
-            }
+        let flexible = draftsFromFlexibleRoot(object)
+        if !flexible.isEmpty {
+            return unique(flexible)
         }
         return unique(drafts(fromJSONObject: object))
     }
 
-    private static func draftFromFlexibleNode(_ any: Any) -> ParsedClassDraft? {
-        guard let node = any as? [String: Any] else { return nil }
-        func string(_ keys: [String]) -> String? {
-            for key in keys {
-                if let value = node[key] as? String, !value.trimmingCharacters(in: .whitespaces).isEmpty {
-                    return value.trimmingCharacters(in: .whitespacesAndNewlines)
+    private static func draftsFromFlexibleRoot(_ object: Any) -> [ParsedClassDraft] {
+        if let array = anyItems(object) {
+            return array.flatMap(draftsFromFlexibleNode)
+        }
+        guard let dict = object as? [String: Any] else { return [] }
+        var drafts: [ParsedClassDraft] = []
+        if let pending = anyItems(dict["pending"]) {
+            drafts.append(contentsOf: pending.compactMap(pendingDraft(from:)))
+        }
+        if let scheduled = anyItems(dict["scheduled"]) {
+            drafts.append(contentsOf: scheduled.flatMap(draftsFromFlexibleNode))
+        }
+        for key in ["classes", "courses", "sessions", "items", "data"] {
+            if let array = anyItems(dict[key]) {
+                drafts.append(contentsOf: array.flatMap(draftsFromFlexibleNode))
+            }
+        }
+        if drafts.isEmpty {
+            drafts.append(contentsOf: draftsFromFlexibleNode(dict))
+        }
+        return drafts
+    }
+
+    private static func anyItems(_ raw: Any?) -> [Any]? {
+        if let arr = raw as? [Any] { return arr }
+        if let arr = raw as? NSArray { return arr.map { $0 as Any } }
+        return nil
+    }
+
+    private static func draftsFromFlexibleNode(_ any: Any) -> [ParsedClassDraft] {
+        guard let node = any as? [String: Any] else { return [] }
+        if let meetings = anyItems(node["meetings"]) ?? anyItems(node["slots"]) ?? anyItems(node["times"]),
+           !meetings.isEmpty {
+            let title = stringValue(node, ["title", "course", "courseName", "name", "kcmc"]) ?? ""
+            return meetings.flatMap { item -> [ParsedClassDraft] in
+                if var dict = item as? [String: Any] {
+                    if dict["title"] == nil { dict["title"] = title }
+                    return draftsFromFlexibleNode(dict)
                 }
+                return []
             }
-            return nil
         }
-        func int(_ keys: [String]) -> Int? {
-            for key in keys {
-                if let value = node[key] as? Int { return value }
-                if let value = node[key] as? String, let n = Int(value) { return n }
-            }
-            return nil
+        if isPendingNode(node) {
+            if let pending = pendingDraft(from: node) { return [pending] }
+            return []
         }
-        let title = string(["title", "course", "courseName", "name", "kcmc"])
+        if let one = scheduledDraft(from: node) {
+            return [one]
+        }
+        return []
+    }
+
+    private static func isPendingNode(_ node: [String: Any]) -> Bool {
+        if node["timePending"] as? Bool == true { return true }
+        if node["pending"] as? Bool == true { return true }
+        if node["unscheduled"] as? Bool == true { return true }
+        let blob = [
+            stringValue(node, ["reason", "status", "notes", "remark", "meeting", "sourceLine", "line", "raw"]) ?? "",
+            stringValue(node, ["title", "course", "name"]) ?? ""
+        ].joined(separator: " ")
+        if ZgysyjyMeeting.isPendingMeeting(blob, title: stringValue(node, ["title", "course", "name"]) ?? "") {
+            let hasClock = stringValue(node, ["startTime", "start", "begin"]) != nil
+                || stringValue(node, ["sourceLine", "line", "meeting", "raw"]).flatMap(ZgysyjyMeeting.parseLine) != nil
+            return !hasClock
+        }
+        return false
+    }
+
+    private static func pendingDraft(from any: Any) -> ParsedClassDraft? {
+        guard let node = any as? [String: Any] else { return nil }
+        let title = stringValue(node, ["title", "course", "courseName", "name", "kcmc"]) ?? ""
+        guard title.count >= 2 else { return nil }
+        return pendingDraft(
+            title: title,
+            teacher: stringValue(node, ["teacher", "teacherName", "jsxm"]) ?? "",
+            notes: stringValue(node, ["reason", "notes", "remark", "credit"]) ?? "时间、地点待定"
+        )
+    }
+
+    static func pendingDraft(title: String, teacher: String, notes: String) -> ParsedClassDraft {
+        ParsedClassDraft(
+            title: title,
+            teacher: teacher,
+            location: "",
+            weekday: .monday,
+            startMinutes: 0,
+            endMinutes: 0,
+            weeks: nil,
+            notes: notes.isEmpty ? "时间、地点待定" : notes,
+            timePending: true
+        )
+    }
+
+    private static func scheduledDraft(from node: [String: Any]) -> ParsedClassDraft? {
+        let title = stringValue(node, ["title", "course", "courseName", "name", "kcmc"])
         guard let title, title.count >= 2, !title.contains("虚拟教室") else { return nil }
 
+        if let line = stringValue(node, ["sourceLine", "line", "meeting", "raw"]),
+           let parsed = ZgysyjyMeeting.parseLine(line) {
+            return ParsedClassDraft(
+                title: title,
+                teacher: stringValue(node, ["teacher", "teacherName", "jsxm"]) ?? "",
+                location: parsed.room,
+                weekday: parsed.weekday,
+                startMinutes: parsed.start,
+                endMinutes: parsed.end,
+                weeks: parsed.weeks,
+                notes: stringValue(node, ["notes", "remark", "periodLabel", "credit"]) ?? "",
+                timePending: false
+            )
+        }
+
         let weekday: ChinaWeekday?
-        if let raw = string(["weekday", "weekDay", "day", "xq"]) {
+        if let raw = stringValue(node, ["weekday", "weekDay", "day", "xq"]) {
             weekday = ChinaWeekday.parseColumnHeader(raw) ?? ChinaWeekday.parse(from: raw)
-        } else if let n = int(["weekday", "weekDay", "day"]) {
+        } else if let n = intValue(node, ["weekday", "weekDay", "day"]) {
             weekday = ChinaWeekday(rawValue: n == 0 ? 7 : n)
         } else {
             weekday = nil
         }
         guard let weekday else { return nil }
 
+        let periodLabel = stringValue(node, ["periodLabel", "period", "section", "jc"]) ?? ""
         var start = 0
         var end = 0
-        if let startText = string(["start", "startTime", "begin"]),
-           let endText = string(["end", "endTime"]),
+        if let startText = stringValue(node, ["start", "startTime", "begin"]),
+           let endText = stringValue(node, ["end", "endTime"]),
            let s = parseClock(startText),
            let e = parseClock(endText) {
             start = s
             end = e
-        } else if let range = string(["time", "clock"]).flatMap(parseClockRange) {
+        } else if let range = stringValue(node, ["time", "clock"]).flatMap(parseClockRange) {
             start = range.0
             end = range.1
-        } else if let period = string(["period", "periodLabel", "section", "jc"]),
-                  let kind = ZgysyjyMeeting.periodKind(from: period) {
+        } else if let kind = ZgysyjyMeeting.periodKind(from: periodLabel) {
             start = kind.minutes.0
             end = kind.minutes.1
         } else {
             return nil
+        }
+        if let kind = ZgysyjyMeeting.periodKind(from: periodLabel), kind.isBand,
+           start == 9 * 60, end == 12 * 60, kind != .bandMorning {
+            start = kind.minutes.0
+            end = kind.minutes.1
         }
         guard end > start else { return nil }
 
         var weeks: [Int]?
         if let list = node["weeks"] as? [Int] {
             weeks = list
-        } else if let list = node["weeks"] as? [Any] {
+        } else if let list = anyItems(node["weeks"]) {
             weeks = list.compactMap { $0 as? Int }
-        } else if let text = string(["weeks", "week", "zcd"]) {
+        } else if let text = stringValue(node, ["weeks", "week", "zcd"]) {
             weeks = parseWeeks(text.contains("周") ? text : "\(text)周") ?? ZgysyjyMeeting.parseWeeksPrefix(text)
         }
 
-        let room = string(["location", "room", "place", "classroom"]) ?? ""
-        let campus = string(["campus"]) ?? ""
+        let room = stringValue(node, ["location", "room", "place", "classroom"]) ?? ""
+        let campus = stringValue(node, ["campus"]) ?? ""
         let location = [room, campus].filter { !$0.isEmpty }.joined(separator: " ")
+        let notes = [periodLabel, stringValue(node, ["notes", "remark", "credit"]) ?? ""]
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
 
         return ParsedClassDraft(
             title: title,
-            teacher: string(["teacher", "teacherName", "jsxm"]) ?? "",
+            teacher: stringValue(node, ["teacher", "teacherName", "jsxm"]) ?? "",
             location: location,
             weekday: weekday,
             startMinutes: start,
             endMinutes: end,
             weeks: weeks,
-            notes: string(["notes", "remark", "periodLabel"]) ?? ""
+            notes: notes,
+            timePending: false
         )
+    }
+
+    private static func stringValue(_ node: [String: Any], _ keys: [String]) -> String? {
+        for key in keys {
+            if let value = node[key] as? String, !value.trimmingCharacters(in: .whitespaces).isEmpty {
+                return value.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return nil
+    }
+
+    private static func intValue(_ node: [String: Any], _ keys: [String]) -> Int? {
+        for key in keys {
+            if let value = node[key] as? Int { return value }
+            if let value = node[key] as? String, let n = Int(value) { return n }
+            if let value = node[key] as? NSNumber { return value.intValue }
+        }
+        return nil
     }
 
     static func drafts(fromJSONObject object: Any) -> [ParsedClassDraft] {
@@ -290,7 +403,15 @@ enum TimetableHeuristics {
     static func unique(_ drafts: [ParsedClassDraft]) -> [ParsedClassDraft] {
         var seen = Set<String>()
         return drafts.filter { draft in
-            let key = "\(draft.title)|\(draft.weekday.rawValue)|\(draft.startMinutes)|\(draft.endMinutes)|\(draft.location)"
+            let title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let key: String
+            if draft.timePending {
+                key = "pending|\(title)"
+            } else {
+                let weeks = (draft.weeks ?? []).map(String.init).joined(separator: ",")
+                let room = draft.location.trimmingCharacters(in: .whitespacesAndNewlines)
+                key = "\(title)|\(draft.weekday.rawValue)|\(draft.startMinutes)|\(draft.endMinutes)|\(room)|\(weeks)"
+            }
             return seen.insert(key).inserted
         }
     }
@@ -355,7 +476,7 @@ enum TimetableHeuristics {
         if let dict = any as? [String: Any] {
             nodes.append(dict)
             for value in dict.values { collectDictionaries(value, into: &nodes) }
-        } else if let array = any as? [Any] {
+        } else if let array = anyItems(any) {
             for value in array { collectDictionaries(value, into: &nodes) }
         }
     }

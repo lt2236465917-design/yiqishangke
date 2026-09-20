@@ -53,7 +53,7 @@ struct ImportView: View {
                             drafts: drafts,
                             didWrite: didWrite,
                             replaceOnImport: $settings.replaceOnImport,
-                            writeEnabled: !drafts.isEmpty && !isWorking && !didWrite,
+                            writeEnabled: drafts.contains(where: { !$0.timePending }) && !isWorking && !didWrite,
                             onWrite: {
                                 Task { await apply() }
                             }
@@ -154,18 +154,22 @@ struct ScheduleImportChecklist: View {
                 Text(summaryLine)
                     .font(.headline)
                     .padding(.top, 4)
-                Text(didWrite ? "已写入本机。如需改表请重新识别核对。" : "尚未写入。请按星期和时间对照网页课表。")
+                Text("上午 09:00–12:00　下午 13:30–16:30　晚上 19:00–21:30")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 2)
+                Text(didWrite ? "已写入本机。如需改表请重新识别核对。" : "尚未写入。时间待定的课只展示，不写入今日课表。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.top, 2)
             }
 
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(drafts.enumerated()), id: \.element.id) { index, draft in
+                ForEach(Array(courseGroups.enumerated()), id: \.element.id) { index, group in
                     if index > 0 {
                         Divider().overlay(KegeTheme.line)
                     }
-                    ImportChecklistRow(draft: draft)
+                    CourseChecklistRow(group: group)
                 }
             }
             .padding(.horizontal, 12)
@@ -178,7 +182,7 @@ struct ScheduleImportChecklist: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 Toggle("导入后替换本机课表", isOn: $replaceOnImport)
-                Text(replaceOnImport ? "写入时清空本机旧课表再放入这些节次。" : "默认关闭：写入时合并进本机课表，不整表替换。")
+                Text(replaceOnImport ? "写入时清空本机旧课表再放入这些已排课时段。" : "默认关闭：写入时合并进本机课表，不整表替换。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button("写入本机课表") {
@@ -192,13 +196,108 @@ struct ScheduleImportChecklist: View {
         }
     }
 
+    private var scheduledDrafts: [EditableClassDraft] { drafts.filter { !$0.timePending } }
+    private var pendingDrafts: [EditableClassDraft] { drafts.filter(\.timePending) }
+
     private var summaryLine: String {
         let courseCount = Set(drafts.map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) }).count
-        let days = Set(drafts.map(\.weekday))
-            .sorted { $0.rawValue < $1.rawValue }
-            .map(\.shortLabel)
-        let dayText = days.isEmpty ? "无星期" : days.joined(separator: "、")
-        return "共 \(drafts.count) 节 · \(courseCount) 门课 · 覆盖 \(dayText)"
+        let scheduledCourses = Set(scheduledDrafts.map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) }).count
+        let pendingCourses = Set(pendingDrafts.map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) }).count
+        var parts = ["\(courseCount) 门课", "\(scheduledCourses) 门已排课"]
+        if pendingCourses > 0 {
+            parts.append("\(pendingCourses) 门时间待定")
+        }
+        if scheduledDrafts.count > 0 {
+            parts.append("\(scheduledDrafts.count) 节有效时段")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private var courseGroups: [CourseChecklistGroup] {
+        var order: [String] = []
+        var map: [String: [EditableClassDraft]] = [:]
+        for draft in drafts {
+            let key = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if map[key] == nil { order.append(key) }
+            map[key, default: []].append(draft)
+        }
+        return order.map { title in
+            let items = map[title] ?? []
+            let scheduled = items.filter { !$0.timePending }
+            let chosen = scheduled.isEmpty ? items : scheduled
+            return CourseChecklistGroup(title: title, drafts: chosen)
+        }
+        .sorted { lhs, rhs in
+            if lhs.isPending != rhs.isPending { return !lhs.isPending }
+            guard let a = lhs.drafts.first, let b = rhs.drafts.first else { return lhs.title < rhs.title }
+            return EditableClassDraft.checklistOrder(a, b)
+        }
+    }
+}
+
+private struct CourseChecklistGroup: Identifiable {
+    var title: String
+    var drafts: [EditableClassDraft]
+    var id: String { title }
+    var isPending: Bool { drafts.allSatisfy(\.timePending) }
+}
+
+private struct CourseChecklistRow: View {
+    let group: CourseChecklistGroup
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(group.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(KegeTheme.ink)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(group.isPending ? KegeTheme.ochre : .secondary)
+                }
+                Spacer(minLength: 0)
+                Button {
+                    expanded.toggle()
+                } label: {
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(expanded ? "收起" : "展开")
+            }
+            if expanded {
+                if group.isPending {
+                    if let teacher = group.drafts.first?.teacher, !teacher.isEmpty {
+                        Text("教师 \(teacher)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    ForEach(group.drafts) { draft in
+                        Text(draft.slotLine)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 12)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(group.title) \(subtitle)")
+    }
+
+    private var subtitle: String {
+        if group.isPending { return "时间、地点待定" }
+        if let credit = group.drafts.compactMap(\.creditText).first {
+            return credit
+        }
+        if group.drafts.count == 1, let draft = group.drafts.first {
+            return draft.slotLine
+        }
+        return "\(group.drafts.count) 个时段"
     }
 }
 
@@ -253,6 +352,8 @@ struct EditableClassDraft: Identifiable {
     var startMinutes: Int
     var endMinutes: Int
     var weeksText: String
+    var notes: String
+    var timePending: Bool
 
     init(_ draft: ParsedClassDraft) {
         title = draft.title
@@ -261,6 +362,8 @@ struct EditableClassDraft: Identifiable {
         weekday = draft.weekday
         startMinutes = draft.startMinutes
         endMinutes = draft.endMinutes
+        notes = draft.notes
+        timePending = draft.timePending
         if let weeks = draft.weeks, !weeks.isEmpty {
             weeksText = Self.compactWeeks(weeks)
         } else {
@@ -271,12 +374,36 @@ struct EditableClassDraft: Identifiable {
     var startText: String { ClassSession.clockLabel(startMinutes) }
     var endText: String { ClassSession.clockLabel(endMinutes) }
 
-    var checklistLine: String {
+    var creditText: String? {
+        let notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let regex = try? NSRegularExpression(pattern: #"(\d+(?:\.\d+)?)\s*学分"#),
+           let match = regex.firstMatch(in: notes, range: NSRange(notes.startIndex..., in: notes)),
+           let range = Range(match.range(at: 1), in: notes) {
+            return "\(notes[range]) 学分"
+        }
+        let parts = notes.split(whereSeparator: { $0 == "·" || $0 == "|" }).map {
+            $0.trimmingCharacters(in: .whitespaces)
+        }
+        if let token = parts.first(where: { $0.contains(".") && Double($0) != nil }) {
+            return "\(token) 学分"
+        }
+        return nil
+    }
+
+    var slotLine: String {
+        if timePending { return "时间、地点待定" }
         var parts = ["\(weekday.shortLabel) \(startText)-\(endText)"]
         let room = location.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !room.isEmpty {
-            parts.append(room)
+        if !room.isEmpty { parts.append(room) }
+        if !weeksText.isEmpty { parts.append("\(weeksText)周") }
+        return parts.joined(separator: " · ")
+    }
+
+    var checklistLine: String {
+        if timePending {
+            return "时间、地点待定 · \(title.trimmingCharacters(in: .whitespacesAndNewlines))"
         }
+        var parts = [slotLine]
         parts.append(title.trimmingCharacters(in: .whitespacesAndNewlines))
         return parts.joined(separator: " · ")
     }
@@ -286,6 +413,7 @@ struct EditableClassDraft: Identifiable {
     }
 
     static func checklistOrder(_ lhs: EditableClassDraft, _ rhs: EditableClassDraft) -> Bool {
+        if lhs.timePending != rhs.timePending { return !lhs.timePending }
         if lhs.weekday.rawValue != rhs.weekday.rawValue {
             return lhs.weekday.rawValue < rhs.weekday.rawValue
         }
@@ -296,6 +424,7 @@ struct EditableClassDraft: Identifiable {
     }
 
     func asSession(source: ClassSource) -> ClassSession? {
+        if timePending { return nil }
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2 else { return nil }
         guard endMinutes > startMinutes else { return nil }
