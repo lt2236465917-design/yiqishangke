@@ -668,7 +668,10 @@ extension LoginWebViewSession: WKNavigationDelegate {
         if PortalNavigation.isGraduateFrameset(webView.url)
             || PortalNavigation.isGraduateHost(webView.url)
             || PortalNavigation.isSchoolPortal(webView.url) {
-            if case .parsed = phase { } else if case .parsing = phase { } else {
+            switch phase {
+            case .parsed, .parsing:
+                break
+            default:
                 phase = .readyToParse
             }
         }
