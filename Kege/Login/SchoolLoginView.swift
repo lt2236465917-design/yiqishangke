@@ -66,6 +66,7 @@ struct SchoolLoginView: View {
     }
 
     private var bannerTitle: String {
+        if session.isOnAppList { return "应用列表：请点研究生综合管理" }
         switch session.phase {
         case .idle: "准备打开学校登录页"
         case .loading: "正在加载"
@@ -79,6 +80,9 @@ struct SchoolLoginView: View {
     }
 
     private var bannerDetail: String {
+        if session.isOnAppList {
+            return "请点应用列表里的研究生综合管理；直达裸开会丢登录态"
+        }
         switch session.phase {
         case .idle:
             "凭证只在本机钥匙串，不会上传。"
@@ -89,9 +93,7 @@ struct SchoolLoginView: View {
         case .needsManualAuth(let reason):
             reason
         case .readyToParse:
-            if session.isOnAppList {
-                "请点应用列表里的研究生综合管理；直达裸开会丢登录态"
-            } else if !session.timetableHint.isEmpty {
+            if !session.timetableHint.isEmpty {
                 session.timetableHint
             } else if session.isOnGraduateFrameset {
                 "研究生系统是框架页。请点左侧「我的课表」后再点「解析本页」。"

@@ -30,6 +30,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     private var didClickMyTimetable = false
     /// Set only when the user taps 「进入研究生系统」 while not yet on appList.
     private var pendingGraduateTileClick = false
+    private var urlObservations: [NSKeyValueObservation] = []
 
     static let desktopSafariUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
 
@@ -46,6 +47,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self
+        observeURL(of: webView)
     }
 
     func dismissPopup() {
@@ -70,7 +72,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         phase = .loading(SchoolParser.loginURL)
         SafeLog.info("Starting school login WebView (ephemeral). Username \(Redaction.username(credentials.username))")
         dismissPopup()
-        webView.load(URLRequest(url: SchoolParser.loginURL))
+        loadSchoolPage(SchoolParser.loginURL, in: webView)
     }
 
     func openGraduateManagement() {
@@ -90,7 +92,38 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         timetableHint = Self.appListSSOHint
         phase = .readyToParse
         SafeLog.info("Not on appList; loading portal appList for SSO tile click (not frameset)")
-        webView.load(URLRequest(url: SchoolParser.portalAppListURL))
+        loadSchoolPage(SchoolParser.portalAppListURL, in: webView)
+    }
+
+    /// Programmatic loads never touch naked `frameset.jsp`. Hash-router landings still update the banner.
+    private func loadSchoolPage(_ url: URL, in webView: WKWebView) {
+        if PortalNavigation.isBareGraduateFrameset(url) {
+            SafeLog.info("Refusing naked graduate frameset load")
+            timetableHint = Self.appListSSOHint
+            phase = .readyToParse
+            return
+        }
+        webView.load(URLRequest(url: url))
+    }
+
+    private func observeURL(of webView: WKWebView) {
+        let observation = webView.observe(\.url, options: [.new]) { [weak self] view, _ in
+            Task { @MainActor in
+                self?.handleObservedURL(view.url)
+            }
+        }
+        urlObservations.append(observation)
+    }
+
+    private func handleObservedURL(_ url: URL?) {
+        remember(url: url)
+        guard PortalNavigation.isAppList(url) else { return }
+        switch phase {
+        case .parsed, .parsing, .failed, .needsManualAuth:
+            break
+        default:
+            phase = .readyToParse
+        }
     }
 
     private static let appListSSOHint = "请点应用列表里的研究生综合管理；直达裸开会丢登录态"
@@ -124,7 +157,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
                 let href = dict["href"] as? String ?? ""
                 if let url = PortalNavigation.resolvedSSOURL(href, relativeTo: currentURL ?? webView.url) {
                     SafeLog.info("Loading discovered SSO host=\(url.host ?? "")")
-                    webView.load(URLRequest(url: url))
+                    loadSchoolPage(url, in: webView)
                     timetableHint = "已通过门户单点登录跳转。进入课表后点「解析本页」。"
                     return
                 }
@@ -338,6 +371,7 @@ extension LoginWebViewSession: WKNavigationDelegate {
             }
         }
         Task {
+            await syncURLFromPage(webView)
             await attemptAutoFillIfNeeded()
             if !didAttemptAutoFill {
                 try? await Task.sleep(nanoseconds: 450_000_000)
@@ -388,6 +422,7 @@ extension LoginWebViewSession: WKUIDelegate {
         child.navigationDelegate = self
         child.uiDelegate = self
         popupWebView = child
+        observeURL(of: child)
         SafeLog.info("Created in-sheet child WebView for window.open")
         return child
     }
