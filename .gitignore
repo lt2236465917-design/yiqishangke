@@ -1,0 +1,39 @@
+# Xcode
+DerivedData/
+build/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+xcuserdata/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+timeline.xctimeline
+playground.xcworkspace
+
+# Secrets — never commit real keys
+Config/Secrets.local.plist
+Config/Secrets.plist
+!Config/Secrets.example.plist
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.mobileprovision
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Swift PM
+.build/
+.swiftpm/
+
+# Agent / editor
+.cursor/
+.claude/
+.idea/
+*.swp
