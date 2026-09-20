@@ -30,7 +30,12 @@ struct VisionOCREngine: ScreenshotRecognizing {
                 let tokens = observations.compactMap { obs -> OCRToken? in
                     guard let candidate = obs.topCandidates(1).first else { return nil }
                     let box = obs.boundingBox
-                    let topLeft = CGRect(x: box.minX, y: 1 - box.maxY, width: box.width, height: box.height)
+                    let topLeft = OCRBox(
+                        x: Double(box.minX),
+                        y: Double(1 - box.maxY),
+                        width: Double(box.width),
+                        height: Double(box.height)
+                    )
                     return OCRToken(text: candidate.string, box: topLeft, confidence: candidate.confidence)
                 }
                 finish(.success(tokens))

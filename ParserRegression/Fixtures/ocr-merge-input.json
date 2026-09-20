@@ -1,0 +1,63 @@
+{
+  "scheduled": [
+    {
+      "title": "遗产概论",
+      "weekday": "周一",
+      "periodLabel": "第一节",
+      "startTime": "09:00",
+      "endTime": "09:45",
+      "weeks": "6-13",
+      "room": "6607"
+    },
+    {
+      "title": "遗产概论",
+      "weekday": "周一",
+      "periodLabel": "第二节",
+      "startTime": "09:45",
+      "endTime": "10:30",
+      "weeks": "6-13",
+      "room": "6607"
+    },
+    {
+      "title": "遗产概论",
+      "weekday": "周一",
+      "periodLabel": "第一节",
+      "startTime": "09:00",
+      "endTime": "09:45",
+      "weeks": "6-13",
+      "room": "6607"
+    },
+    {
+      "title": "东亚艺术通史",
+      "weekday": "周一",
+      "periodLabel": "下午课",
+      "startTime": "13:30",
+      "endTime": "16:30",
+      "weeks": "6-11",
+      "room": "6406"
+    },
+    {
+      "title": "东亚艺术通史",
+      "weekday": "周一",
+      "periodLabel": "下午课",
+      "startTime": "13:30",
+      "endTime": "16:30",
+      "weeks": "3,4",
+      "room": "6406"
+    }
+  ],
+  "pending": [
+    {
+      "title": "导师课",
+      "reason": "时间、地点待定"
+    },
+    {
+      "title": "思政大讲堂：形势与政策",
+      "reason": "label.teachtask.courseclass.week.null"
+    },
+    {
+      "title": "导师课",
+      "reason": "时间、地点待定"
+    }
+  ]
+}

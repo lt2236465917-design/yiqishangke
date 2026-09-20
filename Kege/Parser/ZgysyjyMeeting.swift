@@ -80,6 +80,19 @@ enum ZgysyjyMeeting {
         return map[raw]
     }
 
+    /// Broken graduate-system placeholder, e.g. `2label.teachtask.courseclass.week.null-自排教室…`
+    static func isBrokenPlaceholder(_ text: String) -> Bool {
+        let compact = text
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "\n", with: "")
+            .lowercased()
+        guard !compact.isEmpty else { return false }
+        if compact.contains("label.teachtask") { return true }
+        if compact.contains("courseclass.week.null") { return true }
+        if compact.contains("teachtask") && compact.contains("week.null") { return true }
+        return false
+    }
+
     static func isPendingMeeting(_ text: String, title: String = "") -> Bool {
         if isBrokenPlaceholder(text) { return true }
         let compact = text.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "\n", with: "")
