@@ -1,36 +1,36 @@
 import Foundation
 
 enum ScheduleQuery {
-    static func sessions(on date: Date, in sessions: [ClassSession], calendar: Calendar = .kege) -> [ClassSession] {
-        sessions
+    static func sessions(on date: Date, in allSessions: [ClassSession], calendar: Calendar = .kege) -> [ClassSession] {
+        allSessions
             .filter { $0.occurs(on: date, calendar: calendar) }
             .sorted { $0.startMinutes < $1.startMinutes }
     }
 
-    static func remainingToday(now: Date = Date(), in sessions: [ClassSession], calendar: Calendar = .kege) -> [ClassSession] {
+    static func remainingToday(now: Date = Date(), in allSessions: [ClassSession], calendar: Calendar = .kege) -> [ClassSession] {
         let minutes = currentMinutes(now: now, calendar: calendar)
-        return sessions(on: now, in: sessions, calendar: calendar)
+        return Self.sessions(on: now, in: allSessions, calendar: calendar)
             .filter { $0.endMinutes > minutes }
     }
 
-    static func nextClass(now: Date = Date(), in sessions: [ClassSession], calendar: Calendar = .kege) -> ClassSession? {
+    static func nextClass(now: Date = Date(), in allSessions: [ClassSession], calendar: Calendar = .kege) -> ClassSession? {
         let minutes = currentMinutes(now: now, calendar: calendar)
-        if let laterToday = sessions(on: now, in: sessions, calendar: calendar)
+        if let laterToday = Self.sessions(on: now, in: allSessions, calendar: calendar)
             .first(where: { $0.startMinutes > minutes }) {
             return laterToday
         }
         for offset in 1...7 {
             guard let day = calendar.date(byAdding: .day, value: offset, to: now) else { continue }
-            if let first = sessions(on: day, in: sessions, calendar: calendar).first {
+            if let first = Self.sessions(on: day, in: allSessions, calendar: calendar).first {
                 return first
             }
         }
         return nil
     }
 
-    static func currentClass(now: Date = Date(), in sessions: [ClassSession], calendar: Calendar = .kege) -> ClassSession? {
+    static func currentClass(now: Date = Date(), in allSessions: [ClassSession], calendar: Calendar = .kege) -> ClassSession? {
         let minutes = currentMinutes(now: now, calendar: calendar)
-        return sessions(on: now, in: sessions, calendar: calendar)
+        return Self.sessions(on: now, in: allSessions, calendar: calendar)
             .first { $0.startMinutes <= minutes && minutes < $0.endMinutes }
     }
 
