@@ -53,11 +53,11 @@ struct ZgysyjyParser: SchoolParsing {
             } else if Self.isGraduateFrameset(pageURL) {
                 blocker = """
                 当前是研究生系统框架页（frameset.jsp），课表在子 frame。\
-                请点左侧「我的课表」后再解析本页。课表子菜单准确 URL 尚未核实。
+                请点左侧「我的课表」后再点「录入课表」。课表子菜单准确 URL 尚未核实。
                 """
             } else {
                 blocker = """
-                未识别到课表。请进入研究生系统后打开「我的课表」，再点「解析本页」。\
+                未识别到课表。请进入研究生系统后打开「我的课表」，再点「录入课表」。\
                 课表子菜单 URL 未知。若仍失败请改用截图导入。
                 """
             }

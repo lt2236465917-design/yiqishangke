@@ -234,6 +234,11 @@ enum EmbeddedScripts {
       const tryClick = (el, win) => {
         const text = labelOf(el);
         if (!text || forbidden.test(text)) return false;
+        try { el.scrollIntoView({ block: "center", inline: "nearest" }); } catch (e0) {}
+        try {
+          el.style.outline = "3px solid #b54a3c";
+          el.style.outlineOffset = "2px";
+        } catch (e1) {}
         try { el.click(); } catch (e) { return false; }
         result.clicked = true;
         result.text = text;
@@ -461,6 +466,158 @@ enum EmbeddedScripts {
         }
       }
       return { method: method, href: String(location.href) };
+    })();
+    """
+
+    /// Scroll/highlight left-nav 「我的课表」 so it is easier to tap. Does not click 登录.
+    static let revealMyTimetable = """
+    (function() {
+      const seen = [];
+      const result = { focused: false, text: "", frameUrl: "" };
+      const labelOf = (el) => ((el.innerText || el.textContent || "") + "").replace(/\\s+/g, "");
+      const mark = (el, win) => {
+        const text = labelOf(el);
+        if (text !== "我的课表" && text.indexOf("我的课表") === -1) return false;
+        if (text.length > 16) return false;
+        try { el.scrollIntoView({ block: "center", inline: "nearest" }); } catch (e0) {}
+        try {
+          el.style.outline = "3px solid #b54a3c";
+          el.style.outlineOffset = "2px";
+        } catch (e1) {}
+        result.focused = true;
+        result.text = text;
+        result.frameUrl = win.location.href;
+        return true;
+      };
+      const walk = (win) => {
+        try {
+          const url = win.location.href;
+          if (seen.indexOf(url) !== -1) return false;
+          seen.push(url);
+          const doc = win.document;
+          const nodes = Array.from(doc.querySelectorAll("a, button, td, li, span, div, font, u"));
+          for (const el of nodes) {
+            if (labelOf(el) === "我的课表" && mark(el, win)) return true;
+          }
+          for (const el of nodes) {
+            if (mark(el, win)) return true;
+          }
+          const kids = [];
+          try { for (let i = 0; i < win.frames.length; i += 1) kids.push(win.frames[i]); } catch (e) {}
+          try {
+            doc.querySelectorAll("iframe, frame").forEach((el) => {
+              try { if (el.contentWindow) kids.push(el.contentWindow); } catch (e2) {}
+            });
+          } catch (e) {}
+          for (const child of kids) {
+            try { if (walk(child)) return true; } catch (e) {}
+          }
+        } catch (e) {}
+        return false;
+      };
+      walk(window);
+      return result;
+    })();
+    """
+
+    /// Bring the weekly grid (preferred) into view inside frameset children.
+    static let revealWeeklyGrid = """
+    (function() {
+      const seen = [];
+      const result = { found: false, scrolled: false, score: 0, url: "" };
+      const scoreOf = (text) => {
+        let n = 0;
+        if (text.indexOf("周一") !== -1 && text.indexOf("周二") !== -1) n += 5;
+        if (text.indexOf("上午课") !== -1 || text.indexOf("下午课") !== -1) n += 5;
+        if (text.indexOf("新学期课表") !== -1) n += 3;
+        if (text.indexOf("课程名称") !== -1 && text.indexOf("上课时间") !== -1) n += 2;
+        return n;
+      };
+      const walk = (win) => {
+        try {
+          const url = win.location.href;
+          if (seen.indexOf(url) !== -1) return false;
+          seen.push(url);
+          const doc = win.document;
+          const tables = Array.from(doc.querySelectorAll("table"));
+          let best = null;
+          let bestScore = 0;
+          tables.forEach((t) => {
+            const text = (t.innerText || "") + "";
+            const s = scoreOf(text);
+            if (s > bestScore) { bestScore = s; best = t; }
+          });
+          if (best && bestScore >= 5) {
+            result.found = true;
+            result.score = bestScore;
+            result.url = url;
+            try {
+              best.scrollIntoView({ block: "start", inline: "nearest" });
+              result.scrolled = true;
+            } catch (e) {}
+            return true;
+          }
+          const kids = [];
+          try { for (let i = 0; i < win.frames.length; i += 1) kids.push(win.frames[i]); } catch (e) {}
+          try {
+            doc.querySelectorAll("iframe, frame").forEach((el) => {
+              try { if (el.contentWindow) kids.push(el.contentWindow); } catch (e2) {}
+            });
+          } catch (e) {}
+          for (const child of kids) {
+            try { if (walk(child)) return true; } catch (e) {}
+          }
+        } catch (e) {}
+        return false;
+      };
+      walk(window);
+      return result;
+    })();
+    """
+
+    static let scrollWeeklyGridDown = """
+    (function() {
+      const seen = [];
+      const result = { scrolled: false };
+      const scoreOf = (text) => {
+        let n = 0;
+        if (text.indexOf("周一") !== -1) n += 3;
+        if (text.indexOf("下午课") !== -1 || text.indexOf("晚上课") !== -1) n += 3;
+        return n;
+      };
+      const walk = (win) => {
+        try {
+          const url = win.location.href;
+          if (seen.indexOf(url) !== -1) return false;
+          seen.push(url);
+          const doc = win.document;
+          const tables = Array.from(doc.querySelectorAll("table"));
+          let best = null;
+          let bestScore = 0;
+          tables.forEach((t) => {
+            const s = scoreOf((t.innerText || "") + "");
+            if (s > bestScore) { bestScore = s; best = t; }
+          });
+          if (best && bestScore >= 3) {
+            try { best.scrollIntoView({ block: "end", inline: "nearest" }); result.scrolled = true; } catch (e) {}
+            try { win.scrollBy(0, Math.round((win.innerHeight || 400) * 0.65)); result.scrolled = true; } catch (e2) {}
+            return true;
+          }
+          const kids = [];
+          try { for (let i = 0; i < win.frames.length; i += 1) kids.push(win.frames[i]); } catch (e) {}
+          try {
+            doc.querySelectorAll("iframe, frame").forEach((el) => {
+              try { if (el.contentWindow) kids.push(el.contentWindow); } catch (e2) {}
+            });
+          } catch (e) {}
+          for (const child of kids) {
+            try { if (walk(child)) return true; } catch (e) {}
+          }
+        } catch (e) {}
+        return false;
+      };
+      walk(window);
+      return result;
     })();
     """
 }

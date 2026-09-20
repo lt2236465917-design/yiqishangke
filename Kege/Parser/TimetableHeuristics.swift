@@ -42,7 +42,7 @@ enum SchoolParserError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .timetableURLUnverified:
-            "课后登录课表地址尚未核实。请在 WebView 中手动进入课表页后点「解析本页」，或改用截图导入。"
+            "课后登录课表地址尚未核实。请在 WebView 中手动进入课表页后点「录入课表」，或改用截图导入。"
         case .noTableFound:
             "当前页未识别出课表结构。"
         case .emptyPage:

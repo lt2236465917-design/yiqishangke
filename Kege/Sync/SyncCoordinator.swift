@@ -53,7 +53,7 @@ final class SyncCoordinator: ObservableObject {
             scheduleStore.merge(sessions, source: .portal, note: result.sourceDescription)
         }
         settingsStore.lastSyncAt = Date()
-        settingsStore.lastSyncNote = "门户解析 \(sessions.count) 门"
+        settingsStore.lastSyncNote = "门户录入 \(sessions.count) 节"
         await reminderScheduler.rebuild(sessions: scheduleStore.sessions, enabledTiers: settingsStore.enabledTiers)
         lastMessage = "已写入本机课表，并按已开启的提醒档位重建通知。"
         isPresentingLogin = false

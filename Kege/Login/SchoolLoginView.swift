@@ -3,16 +3,18 @@ import SwiftUI
 
 struct SchoolLoginView: View {
     @ObservedObject var session: LoginWebViewSession
+    @EnvironmentObject private var settings: SettingsStore
     var onCancel: () -> Void
-    var onApply: (ParseResult) -> Void
+    var onApply: (ParseResult, Bool) -> Void
+
+    @State private var drafts: [EditableClassDraft] = []
+    @State private var showingConfirm = false
+    @State private var didWrite = false
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                statusBanner
-                if session.isOnAppList {
-                    appListOffer
-                }
+                instructionStrip
                 ZStack {
                     WebViewContainer(webView: session.webView)
                     if let popup = session.popupWebView {
@@ -34,20 +36,35 @@ struct SchoolLoginView: View {
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("解析本页") {
+                    Button("录入课表") {
                         Task { await session.userTappedParseCurrentPage() }
                     }
+                    .disabled(isCapturing)
                 }
             }
-            .safeAreaInset(edge: .bottom) {
-                actionBar
+            .onChange(of: session.phase) { _, phase in
+                if case .parsed(let result) = phase, !result.classes.isEmpty {
+                    drafts = result.classes
+                        .map(EditableClassDraft.init)
+                        .sorted(by: EditableClassDraft.checklistOrder)
+                    didWrite = false
+                    showingConfirm = true
+                }
+            }
+            .sheet(isPresented: $showingConfirm) {
+                confirmationSheet
             }
         }
     }
 
+    private var isCapturing: Bool {
+        if case .parsing = session.phase { return true }
+        return false
+    }
+
     @ViewBuilder
-    private var statusBanner: some View {
-        VStack(alignment: .leading, spacing: 6) {
+    private var instructionStrip: some View {
+        VStack(alignment: .leading, spacing: 8) {
             Text(bannerTitle)
                 .font(.subheadline.weight(.semibold))
             Text(bannerDetail)
@@ -58,6 +75,17 @@ struct SchoolLoginView: View {
                     .font(.caption2.monospaced())
                     .foregroundStyle(.tertiary)
                     .lineLimit(2)
+            }
+            if session.isOnAppList {
+                Button {
+                    session.openGraduateManagement()
+                } label: {
+                    Text("进入研究生系统")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(KegeTheme.accent)
             }
         }
         .padding(12)
@@ -85,13 +113,13 @@ struct SchoolLoginView: View {
         case .needsManualAuth:
             return "请手动完成验证"
         case .readyToParse:
-            return "请进入课表后再解析"
+            return "请进入课表后再录入"
         case .parsing:
-            return "正在解析本页"
+            return "正在录入课表"
         case .parsed(let result):
-            return result.classes.isEmpty ? "未解析到课程" : "解析到 \(result.classes.count) 门课"
+            return result.classes.isEmpty ? "未识别到课程" : "识别到 \(result.classes.count) 节课"
         case .failed:
-            return "登录页受阻"
+            return session.captureAttempt > 0 ? "录入课表失败" : "登录页受阻"
         }
     }
 
@@ -119,11 +147,12 @@ struct SchoolLoginView: View {
                 return session.timetableHint
             }
             if session.isOnGraduateFrameset {
-                return "研究生系统是框架页。请点左侧「我的课表」后再点「解析本页」。"
+                return "研究生系统是框架页。请点左侧「我的课表」后再点「录入课表」。"
             }
-            return "进入课表页后再点「解析本页」。"
+            return "进入课表页后再点「录入课表」。"
         case .parsing:
-            return "使用 zgysyjy 解析脚本，不是 AI 点选。"
+            let attempt = max(session.captureAttempt, 1)
+            return "正在截取可见周课表并识别（第 \(attempt)/\(ScreenshotImporterError.maxAttempts) 次）。不会自动写入。"
         case .parsed(let result):
             return result.blocker ?? result.sourceDescription
         case .failed(let message):
@@ -149,83 +178,57 @@ struct SchoolLoginView: View {
         }
     }
 
-    private var appListOffer: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(session.ssoBlocked ? "磁贴未走通 SSO" : LoginWebViewSession.appListSSOHint)
-                .font(.subheadline.weight(.semibold))
-            Text(session.ssoBlocked
-                 ? "不要打开裸 frameset.jsp。请亲手再点一次磁贴，或关闭后改用「导入」截图。"
-                 : "下面按钮会在本页点那个磁贴，走门户单点登录。不要自己打开 frameset.jsp。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Button {
-                session.openGraduateManagement()
-            } label: {
-                Text("进入研究生系统")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
+    private var confirmationSheet: some View {
+        NavigationStack {
+            ScrollView {
+                ScheduleImportChecklist(
+                    engine: session.captureEngine.isEmpty ? "门户快照" : session.captureEngine,
+                    drafts: drafts,
+                    didWrite: didWrite,
+                    replaceOnImport: $settings.replaceOnImport,
+                    writeEnabled: !drafts.isEmpty && !didWrite,
+                    onWrite: { applyCaptured() }
+                )
+                .padding(20)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(KegeTheme.accent)
+            .background(KegeTheme.paper.ignoresSafeArea())
+            .navigationTitle("核对课表")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("关闭") { showingConfirm = false }
+                }
+            }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KegeTheme.accent.opacity(0.12))
     }
 
-    @ViewBuilder
-    private var actionBar: some View {
-        VStack(spacing: 10) {
-            if session.isOnAppList {
-                Button {
-                    session.openGraduateManagement()
-                } label: {
-                    Text("进入研究生系统")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(KegeTheme.accent)
-            } else if session.isOnWelcome {
-                Button {
-                    session.openApplicationList()
-                } label: {
-                    Text("打开应用列表")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(KegeTheme.sage)
-            }
-
-            Button {
-                Task { await session.userTappedParseCurrentPage() }
-            } label: {
-                Text("解析本页")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-
-            if case .parsed(let result) = session.phase {
-                if result.classes.isEmpty {
-                    Text("主路径解析未拿到课表。可继续换页再解析，或关闭后改用截图导入。")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Button {
-                        onApply(result)
-                    } label: {
-                        Text("写入本机课表（\(result.classes.count)）")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(KegeTheme.sage)
-                }
-            }
+    private func applyCaptured() {
+        let result: ParseResult
+        if case .parsed(let parsed) = session.phase, !parsed.classes.isEmpty {
+            result = parsed
+        } else {
+            let sessions = drafts.compactMap { $0.asSession(source: .portal) }
+            guard !sessions.isEmpty else { return }
+            result = ParseResult(
+                classes: sessions.map { session in
+                    ParsedClassDraft(
+                        title: session.title,
+                        teacher: session.teacher,
+                        location: session.location,
+                        weekday: session.weekday,
+                        startMinutes: session.startMinutes,
+                        endMinutes: session.endMinutes,
+                        weeks: session.weeks,
+                        notes: session.notes
+                    )
+                },
+                sourceDescription: "portal-snapshot-confirmed",
+                blocker: nil,
+                rawExcerpt: nil
+            )
         }
-        .padding()
-        .background(.ultraThinMaterial)
+        didWrite = true
+        onApply(result, settings.replaceOnImport)
     }
 }
 

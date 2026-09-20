@@ -1,6 +1,7 @@
 import Foundation
 @preconcurrency import WebKit
 import Combine
+import UIKit
 
 enum LoginSessionPhase: Equatable {
     case idle
@@ -24,11 +25,12 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     @Published private(set) var timetableHint = ""
     /// Tile click failed or graduate page is a login wall. Never auto-jump to naked frameset.
     @Published private(set) var ssoBlocked = false
+    @Published private(set) var captureEngine = ""
+    @Published private(set) var captureAttempt = 0
 
     let webView: WKWebView
     /// Popup created by `window.open` / `target=_blank` when the request has no concrete URL yet.
     @Published var popupWebView: WKWebView?
-    private let parser: SchoolParsing
     private var credentials: SchoolCredentials?
     private var didClickMyTimetable = false
     /// Set only when the user taps 「进入研究生系统」 while not yet on appList.
@@ -42,8 +44,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
 
     static let desktopSafariUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
 
-    init(parser: SchoolParsing = ZgysyjyParser()) {
-        self.parser = parser
+    init() {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = dataStore
         config.processPool = processPool
@@ -82,6 +83,8 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         isOnGraduateFrameset = false
         timetableHint = ""
         ssoBlocked = false
+        captureEngine = ""
+        captureAttempt = 0
         phase = .loading(SchoolParser.loginURL)
         SafeLog.info("Starting school login WebView (ephemeral). Username \(Redaction.username(credentials.username))")
         dismissPopup()
@@ -327,11 +330,11 @@ final class LoginWebViewSession: NSObject, ObservableObject {
                 if let url = PortalNavigation.resolvedSSOURL(href, relativeTo: currentURL ?? webView.url) {
                     SafeLog.info("Loading discovered SSO host=\(url.host ?? "") path=\(url.path)")
                     loadSchoolPage(url, in: webView)
-                    timetableHint = "已通过门户单点登录跳转。进入课表后点「解析本页」。"
+                    timetableHint = "已通过门户单点登录跳转。进入课表后点「录入课表」。"
                     return
                 }
                 if clicked {
-                    timetableHint = "已尝试点开「研究生综合管理」。等跳转完成后打开「我的课表」，再点「解析本页」。"
+                    timetableHint = "已尝试点开「研究生综合管理」。等跳转完成后打开「我的课表」，再点「录入课表」。"
                     return
                 }
             } catch {
@@ -381,45 +384,173 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         await syncURLFromPage(webView)
         guard PortalNavigation.isGraduateFrameset(currentURL ?? webView.url)
             || PortalNavigation.isGraduateHost(currentURL ?? webView.url) else { return }
-        guard !didClickMyTimetable else { return }
-        for attempt in 0..<4 {
-            do {
-                let raw = try await webView.evaluateJavaScript(EmbeddedScripts.openMyTimetable)
-                let dict = Self.dictionary(from: raw)
-                if dict["clicked"] as? Bool == true {
-                    didClickMyTimetable = true
-                    timetableHint = "已尝试打开「我的课表」。确认左侧高亮且出现课表后再点「解析本页」。"
-                    SafeLog.info("Clicked 我的课表 attempt=\(attempt + 1)")
-                    return
+        applyGraduatePageZoom(on: webView)
+        if !didClickMyTimetable {
+            for attempt in 0..<4 {
+                do {
+                    let raw = try await webView.evaluateJavaScript(EmbeddedScripts.openMyTimetable)
+                    let dict = Self.dictionary(from: raw)
+                    if dict["clicked"] as? Bool == true {
+                        didClickMyTimetable = true
+                        timetableHint = "已尝试打开「我的课表」。左侧已尽量滚入视野；确认高亮且出现周课表后再点「录入课表」。"
+                        SafeLog.info("Clicked 我的课表 attempt=\(attempt + 1)")
+                        break
+                    }
+                    SafeLog.info("我的课表 not found attempt=\(attempt + 1)")
+                } catch {
+                    SafeLog.error("我的课表 script attempt=\(attempt + 1): \(error.localizedDescription)")
                 }
-                SafeLog.info("我的课表 not found attempt=\(attempt + 1)")
-            } catch {
-                SafeLog.error("我的课表 script attempt=\(attempt + 1): \(error.localizedDescription)")
+                if attempt < 3 {
+                    try? await Task.sleep(nanoseconds: 700_000_000)
+                }
             }
-            if attempt < 3 {
-                try? await Task.sleep(nanoseconds: 700_000_000)
+            if !didClickMyTimetable {
+                didClickMyTimetable = true
+                timetableHint = "请点左侧「我的课表」（已尽量滚入视野），再点「录入课表」。"
+                SafeLog.info("我的课表 click not found; ask user")
             }
         }
-        didClickMyTimetable = true
-        timetableHint = "请点左侧「我的课表」，再点「解析本页」。"
-        SafeLog.info("我的课表 click not found; ask user")
+        await revealMyTimetableMenu(from: webView)
+        await revealWeeklyGrid(from: webView)
+    }
+
+    private func applyGraduatePageZoom(on webView: WKWebView) {
+        if abs(webView.pageZoom - 1.15) > 0.01 {
+            webView.pageZoom = 1.15
+        }
+    }
+
+    @discardableResult
+    private func revealMyTimetableMenu(from webView: WKWebView) async -> Bool {
+        do {
+            let raw = try await webView.evaluateJavaScript(EmbeddedScripts.revealMyTimetable)
+            let dict = Self.dictionary(from: raw)
+            let focused = dict["focused"] as? Bool ?? false
+            SafeLog.info("Focus 我的课表 focused=\(focused)")
+            return focused
+        } catch {
+            SafeLog.error("Focus 我的课表: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    @discardableResult
+    private func revealWeeklyGrid(from webView: WKWebView) async -> Bool {
+        do {
+            let raw = try await webView.evaluateJavaScript(EmbeddedScripts.revealWeeklyGrid)
+            let dict = Self.dictionary(from: raw)
+            let found = dict["found"] as? Bool ?? false
+            SafeLog.info("Reveal weekly grid found=\(found) score=\(Self.intValue(dict["score"]))")
+            return found
+        } catch {
+            SafeLog.error("Reveal weekly grid: \(error.localizedDescription)")
+            return false
+        }
     }
 
     func userTappedParseCurrentPage() async {
-        await parseCurrentPage()
+        await captureVisibleSchedule()
     }
 
-    func parseCurrentPage() async {
+    /// Snapshot the visible weekly grid and run the same multimodal JSON path as screenshot import.
+    /// HTML scrape is not the primary path. Never auto-writes.
+    func captureVisibleSchedule() async {
         phase = .parsing
-        do {
-            let result = try await activeWebView.evaluateJavaScript(EmbeddedScripts.extractPage)
-            let payload = Self.decodeExtract(result)
-            let parsed = parser.parse(html: payload.html, pageURL: payload.url, innerText: payload.innerText)
-            phase = .parsed(parsed)
-            SafeLog.info("Parsed current page classes=\(parsed.classes.count) url=\(payload.url?.absoluteString ?? "unknown")")
-        } catch {
-            phase = .failed("解析脚本执行失败：\(error.localizedDescription)")
+        captureEngine = ""
+        captureAttempt = 0
+        var collected: [ParsedClassDraft] = []
+        var lastError: String?
+        var lastEngine = ""
+        var lastExcerpt = ""
+        let importer = ScreenshotImporter()
+        let maxAttempts = ScreenshotImporterError.maxAttempts
+
+        for attempt in 1...maxAttempts {
+            captureAttempt = attempt
+            timetableHint = "正在截取可见课表并识别（第 \(attempt)/\(maxAttempts) 次）。识别后需你核对，不会自动写入。"
+            await revealMyTimetableMenu(from: activeWebView)
+            await revealWeeklyGrid(from: activeWebView)
+            try? await Task.sleep(nanoseconds: 280_000_000)
+
+            let images: [UIImage]
+            do {
+                images = try await snapshotScheduleViews()
+            } catch {
+                lastError = error.localizedDescription
+                SafeLog.error("Snapshot attempt=\(attempt): \(error.localizedDescription)")
+                continue
+            }
+            guard !images.isEmpty else {
+                lastError = "未能截取 WebView 画面"
+                continue
+            }
+
+            do {
+                let outcome = try await importer.importImages(images)
+                collected.append(contentsOf: outcome.result.classes)
+                lastEngine = outcome.engine
+                lastExcerpt = outcome.result.rawExcerpt ?? ""
+                let merged = WeeklyGridOCRParser.mergeAndDedupe(collected)
+                if !merged.isEmpty {
+                    captureEngine = lastEngine
+                    phase = .parsed(
+                        ParseResult(
+                            classes: merged,
+                            sourceDescription: "\(outcome.result.sourceDescription) portal-snapshot attempt=\(attempt)/\(maxAttempts)",
+                            blocker: nil,
+                            rawExcerpt: lastExcerpt
+                        )
+                    )
+                    timetableHint = "请核对清单后再写入。识别不会自动改本机课表。"
+                    SafeLog.info("Portal capture classes=\(merged.count) attempt=\(attempt) engine=\(lastEngine)")
+                    return
+                }
+            } catch {
+                lastError = error.localizedDescription
+                SafeLog.error("Portal capture attempt=\(attempt): \(error.localizedDescription)")
+            }
         }
+
+        let merged = WeeklyGridOCRParser.mergeAndDedupe(collected)
+        if !merged.isEmpty {
+            captureEngine = lastEngine
+            phase = .parsed(
+                ParseResult(
+                    classes: merged,
+                    sourceDescription: "portal-snapshot merged-retries",
+                    blocker: nil,
+                    rawExcerpt: lastExcerpt
+                )
+            )
+            timetableHint = "请核对清单后再写入。识别不会自动改本机课表。"
+            return
+        }
+
+        let detail = lastError ?? ScreenshotImporterError.emptyRecognition.localizedDescription
+        let message = ScreenshotImporterError.retriesExhausted(
+            attempted: maxAttempts,
+            last: detail
+        ).localizedDescription
+        phase = .failed(message)
+        timetableHint = message
+        SafeLog.info("Portal capture failed after \(maxAttempts) attempts")
+    }
+
+    private func snapshotScheduleViews() async throws -> [UIImage] {
+        var images: [UIImage] = []
+        images.append(try await snapshotVisible())
+        _ = try? await activeWebView.evaluateJavaScript(EmbeddedScripts.scrollWeeklyGridDown)
+        try? await Task.sleep(nanoseconds: 280_000_000)
+        if let extra = try? await snapshotVisible() {
+            images.append(extra)
+        }
+        return images
+    }
+
+    private func snapshotVisible() async throws -> UIImage {
+        let config = WKSnapshotConfiguration()
+        config.afterScreenUpdates = true
+        return try await activeWebView.takeSnapshot(with: config)
     }
 
     private func attemptAutoFillIfNeeded() async {
@@ -464,12 +595,6 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         }
     }
 
-    private struct ExtractedPage {
-        var url: URL?
-        var html: String
-        var innerText: String?
-    }
-
     private static func dictionary(from raw: Any?) -> [String: Any] {
         if let mapped = raw as? [String: Any] {
             return mapped
@@ -491,14 +616,6 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         if let n = raw as? NSNumber { return n.intValue }
         if let d = raw as? Double { return Int(d) }
         return 0
-    }
-
-    private static func decodeExtract(_ raw: Any) -> ExtractedPage {
-        let dict = dictionary(from: raw)
-        let url = (dict["url"] as? String).flatMap(URL.init(string:))
-        let html = dict["html"] as? String ?? ""
-        let text = dict["innerText"] as? String
-        return ExtractedPage(url: url, html: html, innerText: text)
     }
 }
 
@@ -531,8 +648,10 @@ extension LoginWebViewSession: WKNavigationDelegate {
         remember(url: webView.url)
         if case .needsManualAuth = phase { return }
         if case .parsed = phase { return }
+        if case .parsing = phase { return }
         if PortalNavigation.isGraduateFrameset(webView.url) || PortalNavigation.isGraduateHost(webView.url) {
             phase = .readyToParse
+            applyGraduatePageZoom(on: webView)
             return
         }
         if PortalNavigation.isSchoolPortal(webView.url) {
@@ -549,7 +668,7 @@ extension LoginWebViewSession: WKNavigationDelegate {
         if PortalNavigation.isGraduateFrameset(webView.url)
             || PortalNavigation.isGraduateHost(webView.url)
             || PortalNavigation.isSchoolPortal(webView.url) {
-            if case .parsed = phase { } else {
+            if case .parsed = phase { } else if case .parsing = phase { } else {
                 phase = .readyToParse
             }
         }

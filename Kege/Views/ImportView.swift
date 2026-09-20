@@ -48,7 +48,16 @@ struct ImportView: View {
                     }
 
                     if outcome != nil {
-                        confirmationChecklist
+                        ScheduleImportChecklist(
+                            engine: outcome?.engine ?? "",
+                            drafts: drafts,
+                            didWrite: didWrite,
+                            replaceOnImport: $settings.replaceOnImport,
+                            writeEnabled: !drafts.isEmpty && !isWorking && !didWrite,
+                            onWrite: {
+                                Task { await apply() }
+                            }
+                        )
                     }
 
                     Text("有 DeepSeek Key 时一次把多张切片交给模型出 JSON；没 Key 才用本机表格 OCR。请对照网页课表核对清单后再点写入。")
@@ -72,61 +81,6 @@ struct ImportView: View {
                 Text(errorText ?? "")
             }
         }
-    }
-
-    @ViewBuilder
-    private var confirmationChecklist: some View {
-        KegeCard {
-            Text("识别引擎：\(outcome?.engine ?? "")")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(KegeTheme.sage)
-            Text(summaryLine)
-                .font(.headline)
-                .padding(.top, 4)
-            Text(didWrite ? "已写入本机。如需改表请重新选图核对。" : "尚未写入。请按星期和时间对照网页课表。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.top, 2)
-        }
-
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(drafts.enumerated()), id: \.element.id) { index, draft in
-                if index > 0 {
-                    Divider().overlay(KegeTheme.line)
-                }
-                ImportChecklistRow(draft: draft)
-            }
-        }
-        .padding(.horizontal, 12)
-        .background(KegeTheme.card)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(KegeTheme.line, lineWidth: 1)
-        )
-
-        VStack(alignment: .leading, spacing: 12) {
-            Toggle("导入后替换本机课表", isOn: $settings.replaceOnImport)
-            Text(settings.replaceOnImport ? "写入时清空本机旧课表再放入这些节次。" : "默认关闭：写入时合并进本机课表，不整表替换。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Button("写入本机课表") {
-                Task { await apply() }
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(KegeTheme.sage)
-            .disabled(drafts.isEmpty || isWorking || didWrite)
-        }
-        .padding(.top, 4)
-    }
-
-    private var summaryLine: String {
-        let courseCount = Set(drafts.map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) }).count
-        let days = Set(drafts.map(\.weekday))
-            .sorted { $0.rawValue < $1.rawValue }
-            .map(\.shortLabel)
-        let dayText = days.isEmpty ? "无星期" : days.joined(separator: "、")
-        return "共 \(drafts.count) 节 · \(courseCount) 门课 · 覆盖 \(dayText)"
     }
 
     private func recognize(_ items: [PhotosPickerItem]) async {
@@ -165,7 +119,7 @@ struct ImportView: View {
     }
 
     private func apply() async {
-        let sessions = drafts.compactMap { $0.asSession() }
+        let sessions = drafts.compactMap { $0.asSession(source: .screenshot) }
         guard !sessions.isEmpty else {
             errorText = "没有可写入的课程，请重新选图识别。"
             return
@@ -183,7 +137,72 @@ struct ImportView: View {
     }
 }
 
-private struct ImportChecklistRow: View {
+struct ScheduleImportChecklist: View {
+    let engine: String
+    let drafts: [EditableClassDraft]
+    let didWrite: Bool
+    @Binding var replaceOnImport: Bool
+    var writeEnabled: Bool
+    var onWrite: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            KegeCard {
+                Text("识别引擎：\(engine)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(KegeTheme.sage)
+                Text(summaryLine)
+                    .font(.headline)
+                    .padding(.top, 4)
+                Text(didWrite ? "已写入本机。如需改表请重新识别核对。" : "尚未写入。请按星期和时间对照网页课表。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 2)
+            }
+
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(drafts.enumerated()), id: \.element.id) { index, draft in
+                    if index > 0 {
+                        Divider().overlay(KegeTheme.line)
+                    }
+                    ImportChecklistRow(draft: draft)
+                }
+            }
+            .padding(.horizontal, 12)
+            .background(KegeTheme.card)
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(KegeTheme.line, lineWidth: 1)
+            )
+
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle("导入后替换本机课表", isOn: $replaceOnImport)
+                Text(replaceOnImport ? "写入时清空本机旧课表再放入这些节次。" : "默认关闭：写入时合并进本机课表，不整表替换。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("写入本机课表") {
+                    onWrite()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(KegeTheme.sage)
+                .disabled(!writeEnabled)
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    private var summaryLine: String {
+        let courseCount = Set(drafts.map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) }).count
+        let days = Set(drafts.map(\.weekday))
+            .sorted { $0.rawValue < $1.rawValue }
+            .map(\.shortLabel)
+        let dayText = days.isEmpty ? "无星期" : days.joined(separator: "、")
+        return "共 \(drafts.count) 节 · \(courseCount) 门课 · 覆盖 \(dayText)"
+    }
+}
+
+struct ImportChecklistRow: View {
     let draft: EditableClassDraft
     @State private var expanded = false
 
@@ -225,7 +244,7 @@ private struct ImportChecklistRow: View {
     }
 }
 
-private struct EditableClassDraft: Identifiable {
+struct EditableClassDraft: Identifiable {
     var id = UUID()
     var title: String
     var teacher: String
@@ -276,7 +295,7 @@ private struct EditableClassDraft: Identifiable {
         return lhs.title < rhs.title
     }
 
-    func asSession() -> ClassSession? {
+    func asSession(source: ClassSource) -> ClassSession? {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2 else { return nil }
         guard endMinutes > startMinutes else { return nil }
@@ -292,7 +311,7 @@ private struct EditableClassDraft: Identifiable {
             startMinutes: startMinutes,
             endMinutes: endMinutes,
             weeks: weeks,
-            source: .screenshot
+            source: source
         )
     }
 

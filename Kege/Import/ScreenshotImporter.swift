@@ -53,6 +53,9 @@ enum ScreenshotImporterError: LocalizedError {
     case emptyRecognition
     case aiRejected
     case missingAPIKey
+    case retriesExhausted(attempted: Int, last: String)
+
+    static let maxAttempts = 5
 
     var errorDescription: String? {
         switch self {
@@ -60,6 +63,8 @@ enum ScreenshotImporterError: LocalizedError {
         case .emptyRecognition: "没有识别出可用的课表格子。请一次选中上午/下午/晚上整页截图。"
         case .aiRejected: "识图接口返回无法解析"
         case .missingAPIKey: "未配置开发者识图 Key，将使用本机 OCR"
+        case .retriesExhausted(let attempted, let last):
+            "录入课表未能识别（已尝试 \(attempted) 次，不会再试）。\(last)"
         }
     }
 }
@@ -116,6 +121,56 @@ actor ScreenshotImporter {
             ),
             engine: "Vision OCR（未配置 Key）"
         )
+    }
+
+    /// Finite retries for the same images. Never loops forever. Merges by title+weekday+time+room+weeks.
+    func importImagesWithRetries(
+        _ images: [UIImage],
+        maxAttempts: Int = ScreenshotImporterError.maxAttempts
+    ) async throws -> ImportOutcome {
+        let capped = min(max(maxAttempts, 1), ScreenshotImporterError.maxAttempts)
+        var collected: [ParsedClassDraft] = []
+        var lastError: Error?
+        var lastEngine = ""
+        var lastSource = ""
+        var lastExcerpt = ""
+        for attempt in 1...capped {
+            do {
+                let outcome = try await importImages(images)
+                collected.append(contentsOf: outcome.result.classes)
+                lastEngine = outcome.engine
+                lastSource = outcome.result.sourceDescription
+                lastExcerpt = outcome.result.rawExcerpt ?? ""
+                let merged = WeeklyGridOCRParser.mergeAndDedupe(collected)
+                if !merged.isEmpty {
+                    return ImportOutcome(
+                        result: ParseResult(
+                            classes: merged,
+                            sourceDescription: "\(lastSource) attempt=\(attempt)/\(capped)",
+                            blocker: nil,
+                            rawExcerpt: lastExcerpt
+                        ),
+                        engine: lastEngine
+                    )
+                }
+            } catch {
+                lastError = error
+            }
+        }
+        let merged = WeeklyGridOCRParser.mergeAndDedupe(collected)
+        if !merged.isEmpty {
+            return ImportOutcome(
+                result: ParseResult(
+                    classes: merged,
+                    sourceDescription: "\(lastSource) merged-retries",
+                    blocker: nil,
+                    rawExcerpt: lastExcerpt
+                ),
+                engine: lastEngine
+            )
+        }
+        let last = lastError?.localizedDescription ?? ScreenshotImporterError.emptyRecognition.localizedDescription
+        throw ScreenshotImporterError.retriesExhausted(attempted: capped, last: last)
     }
 
     private func recognizeWithOCR(_ image: UIImage) async throws -> ([ParsedClassDraft], String) {

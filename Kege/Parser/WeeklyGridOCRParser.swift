@@ -61,8 +61,10 @@ enum WeeklyGridOCRParser {
     static func uniqueMeetings(_ drafts: [ParsedClassDraft]) -> [ParsedClassDraft] {
         var seen = Set<String>()
         return drafts.filter { draft in
+            let title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
             let weeks = (draft.weeks ?? []).map(String.init).joined(separator: ",")
-            let key = "\(draft.title)|\(draft.weekday.rawValue)|\(draft.startMinutes)|\(draft.endMinutes)|\(weeks)"
+            let room = draft.location.trimmingCharacters(in: .whitespacesAndNewlines)
+            let key = "\(title)|\(draft.weekday.rawValue)|\(draft.startMinutes)|\(draft.endMinutes)|\(room)|\(weeks)"
             return seen.insert(key).inserted
         }
     }

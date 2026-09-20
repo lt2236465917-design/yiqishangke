@@ -51,9 +51,9 @@ iPhone 课表应用：给研究生伴侣在本机查看课表、上课提醒和�
 3. 登录后若停在「欢迎您」个人中心，应用会**自动打开一次** `https://iam.zgysyjy.org.cn/portal/#/appList`（hash 路由）。个人中心没有研究生磁贴。
 4. 看到应用列表后再点「进入研究生系统」（脚本点磁贴 / 真实 SSO URL）。不要自己打开 `https://wxt.zgysyjy.org.cn:7792/graduate/frameset.jsp`。
 5. 磁贴失败或出现「请登录」：关闭，改用截图。应用不会再跳一次裸 frameset。
-6. 进入研究生系统后点左侧 **我的课表**，再点 **解析本页**，确认后再 **写入本机课表**。
+6. 进入研究生系统后点左侧 **我的课表**（应用会尽量把菜单滚入视野），再点右上角 **录入课表**。应用截取可见周课表并走与截图导入相同的识图 JSON；弹出核对清单后，你点 **写入本机课表** 才会落盘。失败最多再试 5 次，不会自动写入。
 
-## 配置 DeepSeek Key（可选，截图更准）
+## 配置 DeepSeek Key（可选，截图和门户录入更准）
 
 设置页空表默认：
 
@@ -87,7 +87,7 @@ Key / 根路径 / 模型 / 补全路径都可以改；下次请求只读钥匙�
 | `SchoolParser` / `ZgysyjyParser` | 周课表优先 + 名单表补全；走 frames/iframes |
 | `ScheduleStore` | 本机 JSON 课表库（App Group） |
 | `SyncCoordinator` | 仅手动同步，写入后重建提醒与小组件 |
-| `ScreenshotImporter` | 多图；有 Key 走 DeepSeek JSON，否则 Vision |
+| `ScreenshotImporter` | 多图或门户快照；有 Key 走 DeepSeek JSON，否则 Vision |
 | `ReminderScheduler` | 按开启档位排程，课表变更重建 |
 | `ScheduleWidgets` | Small / Medium 主屏幕组件 |
 

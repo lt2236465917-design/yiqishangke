@@ -60,7 +60,7 @@ struct MultimodalAIEngine: Sendable {
     }
 
     static let systemPrompt = """
-    你是课表结构化助手。根据研究生「我的课表」周课表截图提取课程。
+    你是课表结构化助手。根据研究生「我的课表」周课表截图或门户 WebView 快照提取课程。
     只返回 JSON 数组，不要 markdown，不要解释。
     数组元素字段：
     - title (string, 必填)
@@ -72,13 +72,15 @@ struct MultimodalAIEngine: Sendable {
     - weeks (string 如 "6-13" 或 "3,4"，或数字数组)
     - room (string, 可空)
     - campus (string, 可空)
-    同一格多门课拆成多项。忽略空格、虚拟教室占位、乱码、表头。不要编造未出现的课。
-    不要索要或回显任何账号、密码、Cookie、Token。
+    只提取真实课程：课名、星期、上下课时间、教室/地点（有则填）。同一格多门课拆成多项。
+    必须忽略：左侧导航、顶栏、页眉、按钮、工作台、登录态、表头、「上午课/下午课/晚上课」单独当课程、空格、虚拟教室占位、乱码、以及损坏的 i18n 键（如 label.xxx、week.null、teachtask）。
+    不要编造未出现的课。不要索要或回显任何账号、密码、Cookie、Token。
     """
 
     static let userPrompt = """
-    这些图是同一周课表的切片（上午/下午/晚上可能分多张）。合并去重后只返回一个 JSON。
-    列=周一…周日，行=上午课/下午课/晚上课或第N节。
+    这些图是同一周课表（网页快照或上午/下午/晚上切片）。可能含左侧「我的课表」菜单和系统铬。
+    忽略导航和标签噪音，只从周课表格子提取真实课程。列=周一…周日，行=上午课/下午课/晚上课或第N节。
+    合并去重后只返回一个 JSON。
     """
 
     private func normalizeJSON(_ content: String) -> String {

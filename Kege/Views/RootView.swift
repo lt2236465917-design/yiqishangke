@@ -20,8 +20,8 @@ struct RootView: View {
             SchoolLoginView(
                 session: sync.loginSession,
                 onCancel: { sync.isPresentingLogin = false },
-                onApply: { result in
-                    Task { await sync.applyParseResult(result) }
+                onApply: { result, replace in
+                    Task { await sync.applyParseResult(result, replace: replace) }
                 }
             )
         }
