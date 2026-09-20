@@ -90,6 +90,7 @@ actor ScreenshotImporter {
         let aiConfig = try credentialsStore.loadAIConfiguration()
         if let aiConfig, aiConfig.isUsable {
             let pair = try await recognizeWithAI(images, config: aiConfig)
+            let merged = WeeklyGridOCRParser.mergeAndDedupe(pair.0)
             guard !merged.isEmpty else { throw ScreenshotImporterError.emptyRecognition }
             return ImportOutcome(
                 result: ParseResult(
