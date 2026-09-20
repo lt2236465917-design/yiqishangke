@@ -27,11 +27,11 @@ struct NextClassProvider: TimelineProvider {
             id: UUID(),
             title: "艺术学理论",
             teacher: "示例",
-            location: "教学楼 A201",
+            location: "6406",
             weekdayLabel: "周一",
-            timeRangeLabel: "08:00–09:40",
-            startMinutes: 480,
-            endMinutes: 580
+            timeRangeLabel: "09:00–12:00",
+            startMinutes: 540,
+            endMinutes: 720
         )
     }
 }
@@ -41,37 +41,47 @@ struct NextClassWidgetView: View {
 
     var body: some View {
         if let card = entry.card {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 0) {
                 Text("下一节")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color(red: 0.70, green: 0.23, blue: 0.23))
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(WidgetLook.muted)
+                Spacer(minLength: 8)
                 Text(card.title)
-                    .font(.headline)
-                    .minimumScaleFactor(0.8)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(WidgetLook.ink)
                     .lineLimit(2)
-                Text(card.timeRangeLabel)
-                    .font(.subheadline.monospacedDigit())
+                    .minimumScaleFactor(0.78)
+                Spacer(minLength: 10)
+                Text(card.clockRange)
+                    .font(.system(size: 22, weight: .medium, design: .rounded).monospacedDigit())
+                    .foregroundStyle(WidgetLook.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
                 if !card.location.isEmpty {
+                    Spacer(minLength: 6)
                     Text(card.location)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(WidgetLook.ink)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
                 Spacer(minLength: 0)
-                Text("课格")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("下一节 \(card.title) \(card.clockRange) \(card.location)")
         } else {
-            VStack(alignment: .leading) {
-                Text("课格")
-                    .font(.caption.weight(.semibold))
-                Text("暂无下一节课")
-                    .font(.headline)
-                Spacer()
+            VStack(alignment: .leading, spacing: 8) {
+                Text("下一节")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(WidgetLook.muted)
+                Spacer(minLength: 0)
+                Text("这会儿没有课")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(WidgetLook.ink)
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 }
@@ -81,15 +91,15 @@ struct NextClassWidget: Widget {
         StaticConfiguration(kind: "KegeNextClass", provider: NextClassProvider()) { entry in
             if #available(iOS 17.0, *) {
                 NextClassWidgetView(entry: entry)
-                    .containerBackground(Color(red: 0.965, green: 0.945, blue: 0.910), for: .widget)
+                    .containerBackground(WidgetLook.paper, for: .widget)
             } else {
                 NextClassWidgetView(entry: entry)
                     .padding()
-                    .background(Color(red: 0.965, green: 0.945, blue: 0.910))
+                    .background(WidgetLook.paper)
             }
         }
         .configurationDisplayName("下一节课")
-        .description("主屏幕小尺寸：下一节课的名称、时间与地点。")
+        .description("课名、上下课时间、教室。不用打开应用。")
         .supportedFamilies([.systemSmall])
     }
 }

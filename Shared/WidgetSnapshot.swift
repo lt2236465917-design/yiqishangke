@@ -15,6 +15,20 @@ struct WidgetSnapshot: Codable, Sendable {
         var timeRangeLabel: String
         var startMinutes: Int
         var endMinutes: Int
+
+        var startClock: String { ClassSession.clockLabel(startMinutes) }
+        var endClock: String { ClassSession.clockLabel(endMinutes) }
+        var clockRange: String { "\(startClock)–\(endClock)" }
+
+        /// Medium widget row: `09:00 · 6607 · 课名`
+        var remainingLine: String {
+            var parts = [startClock]
+            let room = location.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !room.isEmpty { parts.append(room) }
+            let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty { parts.append(name) }
+            return parts.joined(separator: " · ")
+        }
     }
 
     static let empty = WidgetSnapshot(generatedAt: Date.distantPast, nextClass: nil, remainingToday: [])
