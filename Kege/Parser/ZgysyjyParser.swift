@@ -16,7 +16,13 @@ struct ZgysyjyParser: SchoolParsing {
     ]
 
     func parse(html: String, pageURL: URL?, innerText: String?) -> ParseResult {
-        if html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (innerText ?? "").isEmpty {
+        parse(html: html, pageURL: pageURL, innerText: innerText, slices: [])
+    }
+
+    func parse(html: String, pageURL: URL?, innerText: String?, slices: [HTMLTableSlice]) -> ParseResult {
+        if html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (innerText ?? "").isEmpty
+            && slices.isEmpty {
             return ParseResult(
                 classes: [],
                 sourceDescription: "zgysyjy-empty",
@@ -30,7 +36,7 @@ struct ZgysyjyParser: SchoolParsing {
             drafts.append(contentsOf: jsonDrafts)
         }
 
-        let tables = parseSchoolTables(html)
+        let tables = parseSchoolTables(html, extra: slices)
         drafts.append(contentsOf: tables.drafts)
 
         if tables.drafts.isEmpty {
@@ -41,7 +47,12 @@ struct ZgysyjyParser: SchoolParsing {
         }
         drafts = TimetableHeuristics.unique(drafts)
 
-        let looksLikeTimetable = pageLooksLikeTimetable(html: html, url: pageURL, text: innerText)
+        let sliceBlob = slices.map { $0.rows.flatMap { $0 }.joined(separator: "\n") }.joined(separator: "\n")
+        let looksLikeTimetable = pageLooksLikeTimetable(
+            html: html + sliceBlob,
+            url: pageURL,
+            text: (innerText ?? "") + sliceBlob
+        )
         var blocker: String?
         if drafts.isEmpty {
             if (innerText ?? html).contains("请登录") || (innerText ?? html).contains("数据处理出现错误") {
@@ -107,10 +118,13 @@ struct ZgysyjyParser: SchoolParsing {
         var listCount: Int
     }
 
-    private func parseSchoolTables(_ html: String) -> TableParse {
+    private func parseSchoolTables(_ html: String, extra: [HTMLTableSlice]) -> TableParse {
         var grid: [ParsedClassDraft] = []
         var list: [ParsedClassDraft] = []
-        for table in HTMLTableSlice.tables(in: html) {
+        var slices = extra
+        slices.append(contentsOf: HTMLTableSlice.tables(in: html))
+        slices.sort { weekGridScore($0) > weekGridScore($1) }
+        for table in slices {
             if let weekly = parseWeeklyGrid(table), !weekly.isEmpty {
                 grid.append(contentsOf: weekly)
                 continue
@@ -124,6 +138,16 @@ struct ZgysyjyParser: SchoolParsing {
             gridCount: grid.count,
             listCount: list.count
         )
+    }
+
+    private func weekGridScore(_ table: HTMLTableSlice) -> Int {
+        let blob = table.rows.flatMap { $0 }.joined(separator: "\n")
+        var n = 0
+        if blob.contains("周一") && (blob.contains("周二") || blob.contains("周日") || blob.contains("周三")) { n += 8 }
+        if blob.contains("上午课") || blob.contains("下午课") || blob.contains("晚上课") { n += 6 }
+        if blob.contains("第一节") || blob.contains("第1节") { n += 4 }
+        if blob.contains("课程编号") && blob.contains("课程名称") { n += 2 }
+        return n
     }
 
     /// Weekly grid wins on title+weekday (real clocks). List fills gaps and empty fields.
@@ -382,6 +406,126 @@ struct HTMLTableSlice {
             if !output.isEmpty {
                 rows.append(output)
             }
+        }
+        return rows.isEmpty ? nil : HTMLTableSlice(rows: rows)
+    }
+
+    static func slices(fromJavaScriptTables raw: Any?) -> [HTMLTableSlice] {
+        let list: [Any]
+        if let arr = raw as? [Any] {
+            list = arr
+        } else if let arr = raw as? NSArray {
+            list = arr as [Any]
+        } else if let dict = raw as? [String: Any], let nested = dict["tables"] {
+            return slices(fromJavaScriptTables: nested)
+        } else if let dict = raw as? NSDictionary, let nested = dict["tables"] {
+            return slices(fromJavaScriptTables: nested)
+        } else if let one = fromJavaScriptTable(raw) {
+            return [one]
+        } else {
+            return []
+        }
+        var unique: [HTMLTableSlice] = []
+        var seen = Set<String>()
+        for item in list {
+            guard let slice = fromJavaScriptTable(item) else { continue }
+            let key = String(slice.rows.flatMap { $0 }.joined(separator: "|").prefix(800))
+            if key.isEmpty || seen.contains(key) { continue }
+            seen.insert(key)
+            unique.append(slice)
+        }
+        return unique
+    }
+
+    static func fromJavaScriptTable(_ raw: Any?) -> HTMLTableSlice? {
+        let dict: [String: Any]
+        if let mapped = raw as? [String: Any] {
+            dict = mapped
+        } else if let ns = raw as? NSDictionary {
+            var mapped: [String: Any] = [:]
+            for (key, value) in ns {
+                if let key = key as? String { mapped[key] = value }
+            }
+            dict = mapped
+        } else {
+            return nil
+        }
+        let rowsRaw: [Any]
+        if let arr = dict["rows"] as? [Any] {
+            rowsRaw = arr
+        } else if let arr = dict["rows"] as? NSArray {
+            rowsRaw = arr as [Any]
+        } else {
+            return nil
+        }
+        var reported: [[(text: String, rowspan: Int, colspan: Int)]] = []
+        for row in rowsRaw {
+            let cols: [Any]
+            if let arr = row as? [Any] {
+                cols = arr
+            } else if let arr = row as? NSArray {
+                cols = arr as [Any]
+            } else {
+                continue
+            }
+            var line: [(text: String, rowspan: Int, colspan: Int)] = []
+            for col in cols {
+                if let cell = col as? [String: Any] {
+                    line.append((
+                        text: cell["t"] as? String ?? "",
+                        rowspan: intJS(cell["r"]),
+                        colspan: intJS(cell["c"])
+                    ))
+                } else if let ns = col as? NSDictionary {
+                    line.append((
+                        text: ns["t"] as? String ?? "",
+                        rowspan: intJS(ns["r"]),
+                        colspan: intJS(ns["c"])
+                    ))
+                }
+            }
+            if !line.isEmpty { reported.append(line) }
+        }
+        return expandReported(reported)
+    }
+
+    private static func intJS(_ raw: Any?) -> Int {
+        if let n = raw as? Int { return max(1, n) }
+        if let n = raw as? NSNumber { return max(1, n.intValue) }
+        if let d = raw as? Double { return max(1, Int(d)) }
+        return 1
+    }
+
+    private static func expandReported(_ cells: [[(text: String, rowspan: Int, colspan: Int)]]) -> HTMLTableSlice? {
+        var carry: [Int: (text: String, left: Int)] = [:]
+        var rows: [[String]] = []
+        for cellsInRow in cells {
+            var col = 0
+            var cellIndex = 0
+            var output: [String] = []
+            while cellIndex < cellsInRow.count || carry[col] != nil {
+                if let held = carry[col], held.left > 0 {
+                    output.append(held.text)
+                    if held.left == 1 {
+                        carry.removeValue(forKey: col)
+                    } else {
+                        carry[col] = (held.text, held.left - 1)
+                    }
+                    col += 1
+                    continue
+                }
+                guard cellIndex < cellsInRow.count else { break }
+                let cell = cellsInRow[cellIndex]
+                cellIndex += 1
+                for _ in 0..<max(1, cell.colspan) {
+                    output.append(cell.text)
+                    if cell.rowspan > 1 {
+                        carry[col] = (cell.text, cell.rowspan - 1)
+                    }
+                    col += 1
+                }
+            }
+            if !output.isEmpty { rows.append(output) }
         }
         return rows.isEmpty ? nil : HTMLTableSlice(rows: rows)
     }

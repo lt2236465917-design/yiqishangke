@@ -3,7 +3,7 @@ import SwiftUI
 
 struct SchoolLoginView: View {
     /// Shown in the login banner so a stale App install is obvious.
-    static let loginSheetStamp = "9f2990a"
+    static let loginSheetStamp = "tablesfix"
 
     @ObservedObject var session: LoginWebViewSession
     @EnvironmentObject private var settings: SettingsStore
@@ -93,6 +93,11 @@ struct SchoolLoginView: View {
             Text(verbatim: "build \(Self.loginSheetStamp)")
                 .font(.caption2.monospaced())
                 .foregroundStyle(.tertiary)
+            if !session.captureDebug.isEmpty {
+                Text(verbatim: session.captureDebug)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.tertiary)
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)

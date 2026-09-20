@@ -224,63 +224,185 @@ enum EmbeddedScripts {
     })();
     """
 
-    /// Prefer weekly-grid `<table>` nodes across frameset / iframe children.
-    static let extractScheduleTables = """
-    (function() {
-      const seen = [];
+    /// Cell-matrix collector. Parent-frame `contentDocument` walk often throws in WKWebView
+    /// framesets even when children are same-origin; native also pings children via postMessage.
+    static let scheduleDOMCollectJS = """
+    function kegeCollectScheduleTables() {
+      const url = (function() { try { return String(location.href || ""); } catch (e) { return ""; } })();
       const tables = [];
-      const scoreOf = (url, text, html) => {
-        const blob = (url || "") + (text || "") + (html || "");
+      const scoreOf = (u, text) => {
+        const blob = (u || "") + (text || "");
         let n = 0;
-        if (blob.indexOf("周一") !== -1 && (blob.indexOf("周二") !== -1 || blob.indexOf("周日") !== -1)) n += 6;
+        if (blob.indexOf("周一") !== -1 && (blob.indexOf("周二") !== -1 || blob.indexOf("周日") !== -1 || blob.indexOf("周三") !== -1)) n += 6;
         if (blob.indexOf("上午课") !== -1 || blob.indexOf("下午课") !== -1 || blob.indexOf("晚上课") !== -1) n += 6;
         if (blob.indexOf("第一节") !== -1 || blob.indexOf("第1节") !== -1) n += 4;
         if (blob.indexOf("课程编号") !== -1 && blob.indexOf("课程名称") !== -1) n += 5;
-        if (blob.indexOf("新学期课表") !== -1) n += 3;
+        if (blob.indexOf("新学期课表") !== -1 || blob.indexOf("学期课表") !== -1) n += 3;
         if (blob.indexOf("上课时间") !== -1) n += 2;
         return n;
       };
+      const tablePayload = (t, u) => {
+        const text = t.innerText || "";
+        const rows = Array.from(t.rows || []).slice(0, 48).map((tr) =>
+          Array.from(tr.cells || []).slice(0, 14).map((td) => ({
+            t: String(td.innerText || "").slice(0, 800),
+            r: parseInt(td.rowSpan || 1, 10) || 1,
+            c: parseInt(td.colSpan || 1, 10) || 1
+          }))
+        );
+        return {
+          url: u,
+          innerText: String(text).slice(0, 8000),
+          html: String(t.outerHTML || "").slice(0, 100000),
+          score: scoreOf(u, text),
+          rows: rows
+        };
+      };
+      const keep = (p) => {
+        const wide = p.rows.some((r) => r.length >= 5);
+        return p.rows.length > 0 && (p.score > 0 || (p.rows.length >= 4 && wide));
+      };
+      const collectSynthetic = (doc, u) => {
+        try {
+          const text = (doc.body && doc.body.innerText) || "";
+          if (text.indexOf("周一") === -1) return;
+          if (text.indexOf("上午课") === -1 && text.indexOf("下午课") === -1) return;
+          if (tables.some((p) => p.score >= 10)) return;
+          const nodes = Array.from(doc.querySelectorAll("div, section, ul, ol"));
+          let best = null;
+          let bestScore = 0;
+          nodes.forEach((el) => {
+            const t = el.innerText || "";
+            const s = scoreOf(u, t);
+            if (s > bestScore) { bestScore = s; best = el; }
+          });
+          if (!best || bestScore < 10) return;
+          const rows = [];
+          Array.from(best.children).forEach((row) => {
+            const cells = Array.from(row.children);
+            if (cells.length < 3) return;
+            rows.push(cells.slice(0, 14).map((td) => ({
+              t: String(td.innerText || "").slice(0, 800),
+              r: parseInt(td.getAttribute("rowspan") || td.rowSpan || "1", 10) || 1,
+              c: parseInt(td.getAttribute("colspan") || td.colSpan || "1", 10) || 1
+            })));
+          });
+          if (rows.length >= 2) {
+            tables.push({
+              url: u,
+              innerText: String(best.innerText || "").slice(0, 8000),
+              html: "",
+              score: bestScore,
+              rows: rows
+            });
+          }
+        } catch (e) {}
+      };
+      const collectDoc = (doc, u) => {
+        if (!doc) return;
+        try {
+          Array.from(doc.querySelectorAll("table")).forEach((t) => {
+            const p = tablePayload(t, u);
+            if (keep(p)) tables.push(p);
+          });
+        } catch (e) {}
+        collectSynthetic(doc, u);
+      };
+      const seen = [];
       const walk = (win) => {
         try {
-          const url = win.location.href;
-          if (seen.indexOf(url) !== -1) return;
-          seen.push(url);
-          const doc = win.document;
-          Array.from(doc.querySelectorAll("table")).forEach((t) => {
-            const text = t.innerText || "";
-            const html = t.outerHTML || "";
-            const s = scoreOf(url, text, html);
-            if (s > 0 && html.length > 40) {
-              tables.push({ url: url, html: html, innerText: text, score: s });
-            }
-          });
-          const kids = [];
-          try { for (let i = 0; i < win.frames.length; i += 1) kids.push(win.frames[i]); } catch (e) {}
+          const u = win.location.href;
+          if (seen.indexOf(u) !== -1) return;
+          seen.push(u);
+          collectDoc(win.document, u);
           try {
-            doc.querySelectorAll("iframe, frame").forEach((el) => {
-              try { if (el.contentWindow) kids.push(el.contentWindow); } catch (e2) {}
+            for (let i = 0; i < win.frames.length; i += 1) {
+              try { walk(win.frames[i]); } catch (e) {}
+            }
+          } catch (e2) {}
+          try {
+            win.document.querySelectorAll("iframe, frame").forEach((el) => {
+              try { if (el.contentDocument) collectDoc(el.contentDocument, (el.src || u) + "#frame"); } catch (e3) {}
+              try { if (el.contentWindow) walk(el.contentWindow); } catch (e4) {}
             });
-          } catch (e) {}
-          kids.forEach((child) => { try { walk(child); } catch (e3) {} });
-        } catch (e) {}
+          } catch (e5) {}
+        } catch (e6) {}
       };
       walk(window);
       tables.sort((a, b) => b.score - a.score);
-      let html = "";
       let innerText = "";
+      let html = "";
       tables.forEach((t) => {
-        html += "\\n<!-- table:" + t.url + " score:" + t.score + " -->\\n" + t.html;
         innerText += "\\n" + (t.innerText || "");
+        html += "\\n" + (t.html || "");
       });
       const best = tables[0] || {};
+      let frameCount = seen.length;
+      try { frameCount = Math.max(frameCount, window.frames.length); } catch (e7) {}
       return {
-        url: best.url || location.href,
-        title: document.title || "",
-        html: html,
+        url: best.url || url,
         innerText: innerText,
+        html: html,
         tableCount: tables.length,
-        bestScore: best.score || 0
+        frameCount: frameCount,
+        bestScore: best.score || 0,
+        tables: tables
       };
+    }
+    """
+
+    static let extractScheduleTables = "(function() {\n" + scheduleDOMCollectJS + "\nreturn kegeCollectScheduleTables();\n})();"
+
+    /// Injected into every frame (including frameset children). Posts structured tables to native.
+    static let reportScheduleTables = scheduleDOMCollectJS + """
+
+    (function() {
+      if (window.__kegeTablesHooked) return;
+      window.__kegeTablesHooked = true;
+      let last = 0;
+      const report = function() {
+        try {
+          if (!window.webkit || !window.webkit.messageHandlers || !window.webkit.messageHandlers.kegeTables) return;
+          const payload = kegeCollectScheduleTables();
+          window.webkit.messageHandlers.kegeTables.postMessage(payload);
+        } catch (e) {}
+      };
+      const debounced = function() {
+        const now = Date.now();
+        if (now - last < 250) return;
+        last = now;
+        report();
+      };
+      window.addEventListener("message", function(ev) {
+        const data = ev && ev.data;
+        if (!data) return;
+        if (data === "kege-extract-tables") { debounced(); return; }
+        if (data.kege === "extract-tables") debounced();
+      });
+      try { debounced(); } catch (e) {}
+    })();
+    """
+
+    /// Parent often cannot read child `document`. postMessage still reaches same-origin frameset kids.
+    static let pingChildFrames = """
+    (function() {
+      const ping = (win, depth) => {
+        if (!win || depth > 8) return 0;
+        let n = 0;
+        try { win.postMessage({ kege: "extract-tables" }, "*"); n += 1; } catch (e) {}
+        try {
+          for (let i = 0; i < win.frames.length; i += 1) {
+            try { n += ping(win.frames[i], depth + 1); } catch (e2) {}
+          }
+        } catch (e3) {}
+        try {
+          win.document.querySelectorAll("iframe, frame").forEach((el) => {
+            try { if (el.contentWindow) n += ping(el.contentWindow, depth + 1); } catch (e4) {}
+          });
+        } catch (e5) {}
+        return n;
+      };
+      return { pinged: ping(window, 0), frames: window.frames.length };
     })();
     """
 

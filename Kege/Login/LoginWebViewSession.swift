@@ -27,13 +27,15 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     @Published private(set) var ssoBlocked = false
     @Published private(set) var captureEngine = ""
     @Published private(set) var captureAttempt = 0
+    /// One-line DOM probe for the banner (`tables=2 frames=4`). Empty until 录入课表.
+    @Published private(set) var captureDebug = ""
 
     let webView: WKWebView
     /// Popup created by `window.open` / `target=_blank` when the request has no concrete URL yet.
     @Published var popupWebView: WKWebView?
     private var credentials: SchoolCredentials?
     private var didClickMyTimetable = false
-    /// Set only when the user taps 「进入研究生系统」 while not yet on appList.
+    /// Set only if a helper still requests a portal tile click. The login sheet no longer has that button.
     private var pendingGraduateTileClick = false
     /// IAM welcome/user-center → appList, at most once per session.
     private var didRedirectToAppList = false
@@ -42,6 +44,13 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     private let processPool = WKProcessPool()
     private let dataStore = WKWebsiteDataStore.nonPersistent()
     private let parser = ZgysyjyParser()
+    private let tableBridge: KegeTableMessageBridge
+    private var knownFrames: [String: WKFrameInfo] = [:]
+    private var probeTables: [Any] = []
+    private var probeTexts: [String] = []
+    private var probeHTML: [String] = []
+    private var probeTableCount = 0
+    private var probeFrameHits = 0
 
     static let desktopSafariUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
 
@@ -51,11 +60,15 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         config.processPool = processPool
         config.defaultWebpagePreferences.allowsContentJavaScript = true
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
+        let bridge = KegeTableMessageBridge()
+        bridge.install(on: config.userContentController)
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.customUserAgent = Self.desktopSafariUA
         webView.allowsBackForwardNavigationGestures = true
+        self.tableBridge = bridge
         self.webView = webView
         super.init()
+        tableBridge.session = self
         webView.navigationDelegate = self
         webView.uiDelegate = self
         observeURL(of: webView)
@@ -86,6 +99,9 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         ssoBlocked = false
         captureEngine = ""
         captureAttempt = 0
+        captureDebug = ""
+        resetTableProbe()
+        knownFrames = [:]
         phase = .loading(SchoolParser.loginURL)
         SafeLog.info("Starting school login WebView (ephemeral). Username \(Redaction.username(credentials.username))")
         dismissPopup()
@@ -491,13 +507,18 @@ final class LoginWebViewSession: NSObject, ObservableObject {
             SafeLog.info("Portal HTML extract hit login wall")
             return
         }
-        if looksLikePortalOrCatalog(blob) {
+        if payload.slices.isEmpty && looksLikePortalOrCatalog(blob) {
             failCapture(Self.weekGridMissingHint)
-            SafeLog.info("Portal HTML extract refused: not a week grid")
+            SafeLog.info("Portal HTML extract refused: not a week grid tables=\(payload.tableCount) frames=\(payload.frameCount)")
             return
         }
 
-        var parsed = parser.parse(html: payload.html, pageURL: payload.url, innerText: payload.innerText)
+        var parsed = parser.parse(
+            html: payload.html,
+            pageURL: payload.url,
+            innerText: payload.innerText,
+            slices: payload.slices
+        )
         parsed.classes = WeeklyGridOCRParser.mergeAndDedupe(parsed.classes)
         var engine = "HTML 周课表"
 
@@ -516,7 +537,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
             return
         }
 
-        if looksLikeWeekGrid(blob) {
+        if looksLikeWeekGrid(blob) || !payload.slices.isEmpty {
             await finishCaptureWithOptionalSnapshotFallback(
                 reason: Self.weekGridMissingHint,
                 loginWall: false
@@ -540,9 +561,14 @@ final class LoginWebViewSession: NSObject, ObservableObject {
 
     private func looksLikePortalOrCatalog(_ text: String) -> Bool {
         if looksLikeWeekGrid(text) { return false }
-        if text.contains("全部应用") || text.contains("研究生综合管理") { return true }
+        if text.contains("学期课表") || text.contains("上课时间") { return false }
+        if PortalNavigation.isGraduateHost(currentURL ?? activeWebView.url) { return false }
+        if text.contains("全部应用") { return true }
         if text.contains("课程详情") { return true }
-        if text.contains("课程名称") && text.contains("学分") && !text.contains("周一") { return true }
+        if text.contains("研究生综合管理") && (isOnAppList || isOnWelcome) { return true }
+        if text.contains("课程名称") && text.contains("学分") && !text.contains("周一") && !text.contains("周1") {
+            return true
+        }
         return false
     }
 
@@ -550,22 +576,137 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         captureEngine = ""
         phase = .failed(message)
         timetableHint = message
-        SafeLog.info("Portal capture refused: \(message)")
+        SafeLog.info("Portal capture refused: \(message) \(captureDebug)")
     }
 
     private func extractScheduleDOM() async throws -> ExtractedPage {
-        do {
-            let raw = try await activeWebView.evaluateJavaScript(EmbeddedScripts.extractScheduleTables)
-            let tables = decodeExtract(raw)
-            if !tables.html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                SafeLog.info("Extracted schedule tables")
-                return tables
+        resetTableProbe()
+        await pingFramesForTables()
+        try? await Task.sleep(nanoseconds: 350_000_000)
+
+        var combined: [Any] = []
+        var htmlPieces: [String] = []
+        var texts: [String] = []
+        var url: URL?
+        var tableCount = 0
+        var frameCount = 0
+
+        func consume(_ raw: Any?) {
+            let dict = Self.dictionary(from: raw)
+            if url == nil {
+                url = (dict["url"] as? String).flatMap(URL.init(string:))
             }
+            tableCount += Self.intValue(dict["tableCount"])
+            frameCount = max(frameCount, Self.intValue(dict["frameCount"]))
+            if let t = dict["innerText"] as? String, !t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                texts.append(t)
+            }
+            if let h = dict["html"] as? String, !h.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                htmlPieces.append(h)
+            }
+            if let tables = dict["tables"] as? [Any] {
+                combined.append(contentsOf: tables)
+            } else if let tables = dict["tables"] as? NSArray {
+                combined.append(contentsOf: tables as [Any])
+            }
+        }
+
+        do {
+            consume(try await activeWebView.evaluateJavaScript(EmbeddedScripts.extractScheduleTables))
         } catch {
             SafeLog.error("extractScheduleTables: \(error.localizedDescription)")
         }
-        let raw = try await activeWebView.evaluateJavaScript(EmbeddedScripts.extractPage)
-        return decodeExtract(raw)
+
+        for frame in Array(knownFrames.values) {
+            do {
+                let raw = try await activeWebView.evaluateJavaScript(
+                    EmbeddedScripts.extractScheduleTables,
+                    in: frame,
+                    in: WKContentWorld.page
+                )
+                consume(raw)
+            } catch {
+                SafeLog.error("extract frame: \(error.localizedDescription)")
+            }
+        }
+
+        try? await Task.sleep(nanoseconds: 250_000_000)
+
+        combined.append(contentsOf: probeTables)
+        texts.append(contentsOf: probeTexts)
+        htmlPieces.append(contentsOf: probeHTML)
+        frameCount = max(frameCount, probeFrameHits, knownFrames.count)
+        tableCount = max(tableCount, combined.count, probeTableCount)
+
+        var slices = HTMLTableSlice.slices(fromJavaScriptTables: combined)
+        if slices.isEmpty {
+            do {
+                consume(try await activeWebView.evaluateJavaScript(EmbeddedScripts.extractPage))
+            } catch {
+                SafeLog.error("extractPage: \(error.localizedDescription)")
+            }
+            let html = htmlPieces.joined(separator: "\n")
+            if slices.isEmpty {
+                slices = HTMLTableSlice.tables(in: html)
+            }
+        }
+
+        let html = htmlPieces.joined(separator: "\n")
+        let inner = texts.joined(separator: "\n")
+        captureDebug = "tables=\(max(slices.count, tableCount)) frames=\(max(frameCount, 1))"
+        SafeLog.info("Extracted schedule \(captureDebug) slices=\(slices.count)")
+        return ExtractedPage(
+            url: url ?? currentURL ?? activeWebView.url,
+            html: html,
+            innerText: inner,
+            slices: slices,
+            tableCount: max(slices.count, tableCount),
+            frameCount: max(frameCount, 1)
+        )
+    }
+
+    private func pingFramesForTables() async {
+        _ = try? await activeWebView.evaluateJavaScript(EmbeddedScripts.pingChildFrames)
+        for frame in Array(knownFrames.values) {
+            _ = try? await activeWebView.evaluateJavaScript(
+                EmbeddedScripts.pingChildFrames,
+                in: frame,
+                in: WKContentWorld.page
+            )
+        }
+    }
+
+    private func resetTableProbe() {
+        probeTables = []
+        probeTexts = []
+        probeHTML = []
+        probeTableCount = 0
+        probeFrameHits = 0
+    }
+
+    func ingestTableMessage(_ body: Any, frame: WKFrameInfo) {
+        rememberFrame(frame)
+        let dict = Self.dictionary(from: body)
+        probeFrameHits += 1
+        probeTableCount += Self.intValue(dict["tableCount"])
+        if let text = dict["innerText"] as? String, !text.isEmpty {
+            probeTexts.append(text)
+        }
+        if let html = dict["html"] as? String, !html.isEmpty {
+            probeHTML.append(html)
+        }
+        if let tables = dict["tables"] as? [Any] {
+            probeTables.append(contentsOf: tables)
+        } else if let tables = dict["tables"] as? NSArray {
+            probeTables.append(contentsOf: tables as [Any])
+        }
+    }
+
+    private func rememberFrame(_ frame: WKFrameInfo?) {
+        guard let frame else { return }
+        let url = frame.request.url?.absoluteString ?? (frame.isMainFrame ? "main" : "child")
+        let key = url + (frame.isMainFrame ? "#main" : "#sub")
+        knownFrames[key] = frame
     }
 
     private func shouldTryTextCleanup(_ parsed: ParseResult, pageText: String) -> Bool {
@@ -614,7 +755,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         )
         phase = .parsed(result)
         timetableHint = "请核对清单后再写入。识别不会自动改本机课表。"
-        SafeLog.info("Portal HTML capture classes=\(parsed.classes.count) engine=\(engine)")
+        SafeLog.info("Portal HTML capture classes=\(parsed.classes.count) engine=\(engine) \(captureDebug)")
     }
 
     private func finishCaptureWithOptionalSnapshotFallback(reason: String, loginWall: Bool) async {
@@ -727,14 +868,9 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         var url: URL?
         var html: String
         var innerText: String?
-    }
-
-    private func decodeExtract(_ raw: Any?) -> ExtractedPage {
-        let dict = Self.dictionary(from: raw)
-        let url = (dict["url"] as? String).flatMap(URL.init(string:))
-        let html = dict["html"] as? String ?? ""
-        let text = dict["innerText"] as? String
-        return ExtractedPage(url: url, html: html, innerText: text)
+        var slices: [HTMLTableSlice] = []
+        var tableCount = 0
+        var frameCount = 0
     }
 
     private static func dictionary(from raw: Any?) -> [String: Any] {
@@ -761,6 +897,33 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     }
 }
 
+private final class KegeTableMessageBridge: NSObject, WKScriptMessageHandler {
+    weak var session: LoginWebViewSession?
+
+    func install(on controller: WKUserContentController) {
+        controller.add(self, name: "kegeTables")
+        controller.addUserScript(
+            WKUserScript(
+                source: EmbeddedScripts.reportScheduleTables,
+                injectionTime: .atDocumentEnd,
+                forMainFrameOnly: false
+            )
+        )
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        guard message.name == "kegeTables" else { return }
+        let body = message.body
+        let frame = message.frameInfo
+        Task { @MainActor [weak session] in
+            session?.ingestTableMessage(body, frame: frame)
+        }
+    }
+}
+
 extension LoginWebViewSession: WKNavigationDelegate {
     func webView(
         _ webView: WKWebView,
@@ -769,6 +932,8 @@ extension LoginWebViewSession: WKNavigationDelegate {
         decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void
     ) {
         preferences.allowsContentJavaScript = true
+        rememberFrame(navigationAction.targetFrame)
+        rememberFrame(navigationAction.sourceFrame)
         let url = navigationAction.request.url
         if let url, url.host?.lowercased().contains("wxt.zgysyjy.org.cn") == true {
             SafeLog.info("wxt hop port=\(url.port.map(String.init) ?? "443") path=\(url.path) hasQuery=\(url.query?.isEmpty == false)")
@@ -867,6 +1032,7 @@ extension LoginWebViewSession: WKUIDelegate {
         configuration.processPool = processPool
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+        tableBridge.install(on: configuration.userContentController)
         let child = WKWebView(frame: webView.bounds, configuration: configuration)
         child.customUserAgent = Self.desktopSafariUA
         child.allowsBackForwardNavigationGestures = true
