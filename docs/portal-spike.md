@@ -1,7 +1,8 @@
 # 门户探测：中国艺术研究院 IAM / 课表
 
 探测日期：2026-09-20（Cloud Agent 出口网络）。  
-登录线索：`https://iam.zgysyjy.org.cn`（用户提供）。
+登录线索：`https://iam.zgysyjy.org.cn`（用户提供）。  
+本机安装与陌生人 clone 流程见仓库根目录 [README.md](../README.md)；发布勾选见 [release-checklist.md](release-checklist.md)。
 
 ## 预定点击路径（门户主路径）
 

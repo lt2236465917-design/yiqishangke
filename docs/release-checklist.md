@@ -17,13 +17,13 @@ known_risk_acceptance: |
     本环境未跑 Xcode 编译，编译是否在你的 Mac 上通过需本机确认。
 ---
 
-# 课格本地 sideload 发布清单（PR #1 / main `96f511b`）
+# 课格本地 sideload 发布清单
 
-给人类用的草稿。渠道仅限本机 ZIP 或 clone 后 Xcode 安装。  
-**未授权** App Store、TestFlight、公证、生产部署。机器人不得代发。
+给人类勾选用。**入口说明以仓库根目录 [README.md](../README.md) 为准**（clone `main`、打开 `Kege.xcodeproj`、本机安装）。  
+渠道仅限本机 ZIP 或 clone 后 Xcode 安装。**未授权** App Store、TestFlight、公证、生产部署。机器人不得代发。
 
-对照 tip：`96f511b714cc765d83123fdbb2f7faa0d2331caf`（Merge pull request #1）。  
-登录页可见戳应为 `build eedf46d`；若仍是更早戳，先卸掉旧包再装本 tip。
+对照：PR #1 合入 merge `96f511b`；登录戳 `build eedf46d`（RF-109）。其后若只有文档提交，仍用该戳。  
+源必须是 **main**，不要再用已过时的 `cursor/kege-ios-app-3b30` 分支 ZIP。
 
 ## 1. 范围 / 非目标
 
@@ -43,10 +43,10 @@ known_risk_acceptance: |
 
 ## 2. 构建与安装
 
-源必须是 **已合并的 main**，不要再用 PR #1 功能分支 ZIP（README 里旧的 `cursor/kege-ios-app-3b30` 链接已过时）。
+源必须是 **已合并的 main**，不要再用 PR #1 功能分支 ZIP。
 
-- [ ] 下载 ZIP：https://github.com/lt2236465917-design/yiqishangke/archive/refs/heads/main.zip  
-      或 `git clone` 后 `git checkout main` 且 `git rev-parse HEAD` 为 `96f511b…`（或其后只含文档的 tip）
+- [ ] 按 [README.md](../README.md) clone 或下 main ZIP：https://github.com/lt2236465917-design/yiqishangke/archive/refs/heads/main.zip  
+      `git checkout main` 后 `git log -1 --oneline` 应包含 PR #1 的 merge `96f511b` 或其后提交
 - [ ] 解压/克隆后打开根目录 **`Kege.xcodeproj`**（不要另开 workspace）
 - [ ] Xcode 15+（建议 16 / Swift 6 编译器）；Scheme **Kege**；目标 iPhone 模拟器或真机 **iOS 17+**
 - [ ] Target **Kege**：Signing 勾自己的 Team；Capabilities App Groups = `group.cn.yiqishangke.Kege`
