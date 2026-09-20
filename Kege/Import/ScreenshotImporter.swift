@@ -90,11 +90,11 @@ actor ScreenshotImporter {
             return ImportOutcome(
                 result: ParseResult(
                     classes: merged,
-                    sourceDescription: "vision-llm \(aiConfig.model) x\(images.count)",
+                    sourceDescription: "vision-llm \(aiConfig.resolvedModel) x\(images.count)",
                     blocker: nil,
                     rawExcerpt: String(pair.1.prefix(600))
                 ),
-                engine: "多模态 \(aiConfig.model)"
+                engine: "多模态 \(aiConfig.resolvedModel)"
             )
         }
 

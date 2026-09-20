@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var aiKey = ""
     @State private var aiBase = AIVisionConfiguration.defaultBaseURL
     @State private var aiModel = AIVisionConfiguration.defaultModel
+    @State private var aiPath = AIVisionConfiguration.defaultCompletionsPath
     @State private var hasAIKey = false
     @State private var banner: String?
 
@@ -122,7 +123,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("开发者识图（可选）")
                 .font(KegeTheme.titleFont)
-            Text("空表默认是 DeepSeek：`https://api.deepseek.com` + `deepseek-flash`（官方识图）。三项都可改，下次请求只读你保存的钥匙串，不必重装应用。有 Key 走多模态 JSON；没 Key 才用本机 OCR。请求只发课表图片。不要把 Key 提交进 git。")
+            Text("空表默认是 DeepSeek：`https://api.deepseek.com` + `deepseek-flash` + `/chat/completions`。Key、根路径、模型、补全路径都可改；下次请求只读钥匙串，厂商换模型不必重装。有 Key 走多模态 JSON；没 Key 才用本机 OCR。请求只发课表图片。不要把 Key 提交进 git。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             KegeCard {
@@ -132,6 +133,8 @@ struct SettingsView: View {
                     .textInputAutocapitalization(.never)
                     .keyboardType(.URL)
                 TextField("模型名", text: $aiModel)
+                    .textInputAutocapitalization(.never)
+                TextField("补全路径（可选）", text: $aiPath)
                     .textInputAutocapitalization(.never)
                 HStack {
                     Button("保存 Key") { saveAI() }
@@ -182,8 +185,9 @@ struct SettingsView: View {
         }
         if let ai = try? CredentialsStore.shared.loadAIConfiguration() {
             aiKey = ai.apiKey
-            aiBase = ai.baseURL
-            aiModel = ai.model
+            aiBase = ai.resolvedBaseURL
+            aiModel = ai.resolvedModel
+            aiPath = ai.resolvedCompletionsPath
             hasAIKey = ai.isUsable
         }
     }
@@ -213,7 +217,7 @@ struct SettingsView: View {
     private func saveAI() {
         do {
             try CredentialsStore.shared.saveAIConfiguration(
-                AIVisionConfiguration(apiKey: aiKey, baseURL: aiBase, model: aiModel)
+                AIVisionConfiguration(apiKey: aiKey, baseURL: aiBase, model: aiModel, completionsPath: aiPath)
             )
             hasAIKey = true
             banner = "识图 Key 已写入钥匙串"
@@ -228,6 +232,7 @@ struct SettingsView: View {
             aiKey = ""
             aiBase = AIVisionConfiguration.defaultBaseURL
             aiModel = AIVisionConfiguration.defaultModel
+            aiPath = AIVisionConfiguration.defaultCompletionsPath
             hasAIKey = false
             banner = "已删除识图 Key"
         } catch {

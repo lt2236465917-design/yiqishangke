@@ -14,9 +14,7 @@ struct MultimodalAIEngine: Sendable {
         let jpegs = images.compactMap { $0.jpegData(compressionQuality: 0.72) }
         guard !jpegs.isEmpty else { throw ScreenshotImporterError.invalidImage }
 
-        let root = configuration.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let completions = root.hasSuffix("/chat/completions") ? root : "\(root)/chat/completions"
-        guard let url = URL(string: completions) else { throw ScreenshotImporterError.aiRejected }
+        guard let url = configuration.chatCompletionsURL else { throw ScreenshotImporterError.aiRejected }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -38,7 +36,7 @@ struct MultimodalAIEngine: Sendable {
         }
 
         let body: [String: Any] = [
-            "model": configuration.model,
+            "model": configuration.resolvedModel,
             "temperature": 0,
             "messages": [
                 ["role": "system", "content": Self.systemPrompt],

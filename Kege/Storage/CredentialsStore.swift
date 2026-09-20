@@ -18,12 +18,41 @@ struct AIVisionConfiguration: Equatable, Sendable {
     var apiKey: String
     var baseURL: String
     var model: String
+    /// OpenAI-compatible path, e.g. `/chat/completions`. Empty uses `defaultCompletionsPath`.
+    var completionsPath: String
 
     /// Empty-field defaults only. Runtime always uses Keychain / Settings values.
     static let defaultBaseURL = "https://api.deepseek.com"
     static let defaultModel = "deepseek-flash"
+    static let defaultCompletionsPath = "/chat/completions"
 
     var isUsable: Bool { !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    var resolvedBaseURL: String {
+        let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? Self.defaultBaseURL : trimmed
+    }
+
+    var resolvedModel: String {
+        let trimmed = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? Self.defaultModel : trimmed
+    }
+
+    var resolvedCompletionsPath: String {
+        let trimmed = completionsPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? Self.defaultCompletionsPath : trimmed
+    }
+
+    /// Build the chat.completions URL from saved fields; do not bake a vendor host.
+    var chatCompletionsURL: URL? {
+        let root = resolvedBaseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let path = resolvedCompletionsPath
+        if root.hasSuffix(path) || root.hasSuffix("/chat/completions") {
+            return URL(string: root)
+        }
+        let suffix = path.hasPrefix("/") ? path : "/\(path)"
+        return URL(string: root + suffix)
+    }
 }
 
 enum CredentialsStoreError: LocalizedError {
@@ -80,14 +109,15 @@ final class CredentialsStore: @unchecked Sendable {
     func loadAIConfiguration() throws -> AIVisionConfiguration? {
         guard let data = try read(account: aiAccount) else { return nil }
         let payload = try decoder.decode(AIPayload.self, from: data)
-        return AIVisionConfiguration(apiKey: payload.apiKey, baseURL: payload.baseURL, model: payload.model)
+        return payload.asConfiguration()
     }
 
     func saveAIConfiguration(_ configuration: AIVisionConfiguration) throws {
         let payload = AIPayload(
             apiKey: configuration.apiKey,
-            baseURL: configuration.baseURL,
-            model: configuration.model
+            baseURL: configuration.resolvedBaseURL,
+            model: configuration.resolvedModel,
+            completionsPath: configuration.resolvedCompletionsPath
         )
         try write(account: aiAccount, data: encoder.encode(payload))
         SafeLog.info("Developer AI vision key saved (redacted)")
@@ -110,10 +140,12 @@ final class CredentialsStore: @unchecked Sendable {
             guard !key.isEmpty else { continue }
             let base = (plist["AI_BASE_URL"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let model = (plist["AI_MODEL"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let path = (plist["AI_COMPLETIONS_PATH"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             let config = AIVisionConfiguration(
                 apiKey: key,
                 baseURL: (base?.isEmpty == false ? base! : AIVisionConfiguration.defaultBaseURL),
-                model: (model?.isEmpty == false ? model! : AIVisionConfiguration.defaultModel)
+                model: (model?.isEmpty == false ? model! : AIVisionConfiguration.defaultModel),
+                completionsPath: (path?.isEmpty == false ? path! : AIVisionConfiguration.defaultCompletionsPath)
             )
             try? saveAIConfiguration(config)
             SafeLog.info("Ingested developer AI key from local plist (not logged)")
@@ -174,4 +206,14 @@ private struct AIPayload: Codable {
     var apiKey: String
     var baseURL: String
     var model: String
+    var completionsPath: String?
+
+    func asConfiguration() -> AIVisionConfiguration {
+        AIVisionConfiguration(
+            apiKey: apiKey,
+            baseURL: baseURL,
+            model: model,
+            completionsPath: completionsPath ?? ""
+        )
+    }
 }
