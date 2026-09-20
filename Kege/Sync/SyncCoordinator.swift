@@ -17,14 +17,14 @@ final class SyncCoordinator: ObservableObject {
         credentialsStore: CredentialsStore = .shared,
         scheduleStore: ScheduleStore,
         settingsStore: SettingsStore,
-        reminderScheduler: ReminderScheduler = .shared,
-        loginSession: LoginWebViewSession = LoginWebViewSession()
+        reminderScheduler: ReminderScheduler? = nil,
+        loginSession: LoginWebViewSession? = nil
     ) {
         self.credentialsStore = credentialsStore
         self.scheduleStore = scheduleStore
         self.settingsStore = settingsStore
-        self.reminderScheduler = reminderScheduler
-        self.loginSession = loginSession
+        self.reminderScheduler = reminderScheduler ?? .shared
+        self.loginSession = loginSession ?? LoginWebViewSession()
     }
 
     func beginManualSync() {

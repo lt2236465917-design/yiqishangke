@@ -16,7 +16,13 @@ final class AppDependencies: ObservableObject {
         self.credentials = credentials
         self.schedule = schedule
         self.settings = settings
-        self.sync = SyncCoordinator(scheduleStore: schedule, settingsStore: settings)
+        self.sync = SyncCoordinator(
+            credentialsStore: credentials,
+            scheduleStore: schedule,
+            settingsStore: settings,
+            reminderScheduler: .shared,
+            loginSession: LoginWebViewSession()
+        )
     }
 }
 
