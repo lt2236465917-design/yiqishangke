@@ -31,7 +31,7 @@ final class SettingsStore: ObservableObject {
         self.reminderDay1 = defaults.bool(forKey: Keys.d1)
         self.lastSyncAt = defaults.object(forKey: Keys.lastSync) as? Date
         self.lastSyncNote = defaults.string(forKey: Keys.lastSyncNote) ?? ""
-        self.replaceOnImport = defaults.object(forKey: Keys.replaceOnImport) as? Bool ?? true
+        self.replaceOnImport = defaults.object(forKey: Keys.replaceOnImport) as? Bool ?? false
     }
 
     var enabledTiers: [ReminderTier] {
@@ -64,6 +64,6 @@ final class SettingsStore: ObservableObject {
         static let d1 = "reminder.day1"
         static let lastSync = "sync.lastAt"
         static let lastSyncNote = "sync.lastNote"
-        static let replaceOnImport = "import.replace"
+        static let replaceOnImport = "import.replace.defaultOff"
     }
 }

@@ -13,7 +13,7 @@ struct ImportView: View {
     @State private var outcome: ImportOutcome?
     @State private var drafts: [EditableClassDraft] = []
     @State private var errorText: String?
-    @State private var engineNote = "有 DeepSeek Key 时一次把多张切片交给模型出 JSON；没 Key 才用本机表格 OCR。写入前可改、可删。"
+    @State private var didWrite = false
 
     var body: some View {
         NavigationStack {
@@ -22,7 +22,7 @@ struct ImportView: View {
                     KegeCard {
                         Text("截图导入")
                             .font(KegeTheme.titleFont)
-                        Text("一周课表请一次选中上午/下午/晚上多张。门户能打开「我的课表」时仍优先网页解析；截图是备用路径。")
+                        Text("一周课表请一次选中上午/下午/晚上多张。识别结果只用于核对，不会自动写入本机课表。")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .padding(.top, 4)
@@ -43,58 +43,15 @@ struct ImportView: View {
                     .tint(KegeTheme.accent)
                     .disabled(isWorking)
 
-                    Toggle("导入后替换本机课表", isOn: $settings.replaceOnImport)
-                        .padding(.horizontal, 4)
-
                     if isWorking {
                         ProgressView(progressText.isEmpty ? "正在识别…" : progressText)
                     }
 
-                    if let outcome {
-                        KegeCard {
-                            Text("识别引擎：\(outcome.engine)")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(KegeTheme.sage)
-                            Text("请确认 \(drafts.count) 节课后再写入")
-                                .font(.headline)
-                                .padding(.top, 4)
-                            if !drafts.isEmpty {
-                                Button("写入本机课表") {
-                                    Task { await apply() }
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .tint(KegeTheme.sage)
-                                .padding(.top, 8)
-                            }
-                        }
-
-                        ForEach($drafts) { $draft in
-                            KegeCard {
-                                TextField("课程名称", text: $draft.title)
-                                    .font(.subheadline.weight(.semibold))
-                                Picker("星期", selection: $draft.weekday) {
-                                    ForEach(ChinaWeekday.allCases) { day in
-                                        Text(day.shortLabel).tag(day)
-                                    }
-                                }
-                                HStack {
-                                    TextField("开始 HH:MM", text: $draft.startText)
-                                        .keyboardType(.numbersAndPunctuation)
-                                    TextField("结束 HH:MM", text: $draft.endText)
-                                        .keyboardType(.numbersAndPunctuation)
-                                }
-                                TextField("教师", text: $draft.teacher)
-                                TextField("教室", text: $draft.location)
-                                TextField("周次（如 6-13 或 3,4）", text: $draft.weeksText)
-                                Button("删除这节", role: .destructive) {
-                                    drafts.removeAll { $0.id == draft.id }
-                                }
-                                .font(.caption)
-                            }
-                        }
+                    if outcome != nil {
+                        confirmationChecklist
                     }
 
-                    Text(engineNote)
+                    Text("有 DeepSeek Key 时一次把多张切片交给模型出 JSON；没 Key 才用本机表格 OCR。请对照网页课表核对清单后再点写入。")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
@@ -115,6 +72,61 @@ struct ImportView: View {
                 Text(errorText ?? "")
             }
         }
+    }
+
+    @ViewBuilder
+    private var confirmationChecklist: some View {
+        KegeCard {
+            Text("识别引擎：\(outcome?.engine ?? "")")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(KegeTheme.sage)
+            Text(summaryLine)
+                .font(.headline)
+                .padding(.top, 4)
+            Text(didWrite ? "已写入本机。如需改表请重新选图核对。" : "尚未写入。请按星期和时间对照网页课表。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+        }
+
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(drafts.enumerated()), id: \.element.id) { index, draft in
+                if index > 0 {
+                    Divider().overlay(KegeTheme.line)
+                }
+                ImportChecklistRow(draft: draft)
+            }
+        }
+        .padding(.horizontal, 12)
+        .background(KegeTheme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(KegeTheme.line, lineWidth: 1)
+        )
+
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle("导入后替换本机课表", isOn: $settings.replaceOnImport)
+            Text(settings.replaceOnImport ? "写入时清空本机旧课表再放入这些节次。" : "默认关闭：写入时合并进本机课表，不整表替换。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button("写入本机课表") {
+                Task { await apply() }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(KegeTheme.sage)
+            .disabled(drafts.isEmpty || isWorking || didWrite)
+        }
+        .padding(.top, 4)
+    }
+
+    private var summaryLine: String {
+        let courseCount = Set(drafts.map { $0.title.trimmingCharacters(in: .whitespacesAndNewlines) }).count
+        let days = Set(drafts.map(\.weekday))
+            .sorted { $0.rawValue < $1.rawValue }
+            .map(\.shortLabel)
+        let dayText = days.isEmpty ? "无星期" : days.joined(separator: "、")
+        return "共 \(drafts.count) 节 · \(courseCount) 门课 · 覆盖 \(dayText)"
     }
 
     private func recognize(_ items: [PhotosPickerItem]) async {
@@ -142,7 +154,10 @@ struct ImportView: View {
             let importer = ScreenshotImporter()
             let next = try await importer.importImages(images)
             outcome = next
-            drafts = next.result.classes.map(EditableClassDraft.init)
+            drafts = next.result.classes
+                .map(EditableClassDraft.init)
+                .sorted(by: EditableClassDraft.checklistOrder)
+            didWrite = false
             pickerItems = []
         } catch {
             errorText = error.localizedDescription
@@ -152,7 +167,7 @@ struct ImportView: View {
     private func apply() async {
         let sessions = drafts.compactMap { $0.asSession() }
         guard !sessions.isEmpty else {
-            errorText = "没有可写入的课程，请先改完必填项。"
+            errorText = "没有可写入的课程，请重新选图识别。"
             return
         }
         if settings.replaceOnImport {
@@ -164,6 +179,49 @@ struct ImportView: View {
         settings.lastSyncNote = "截图导入 \(sessions.count) 节"
         await sync.rebuildReminders()
         sync.lastMessage = "截图课表已写入今日/本周。"
+        didWrite = true
+    }
+}
+
+private struct ImportChecklistRow: View {
+    let draft: EditableClassDraft
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(draft.checklistLine)
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(KegeTheme.ink)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if draft.hasExpandableDetails {
+                    Button {
+                        expanded.toggle()
+                    } label: {
+                        Text(expanded ? "收起" : "详情")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(KegeTheme.sage)
+                }
+            }
+            if expanded {
+                if !draft.teacher.isEmpty {
+                    Text("教师 \(draft.teacher)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if !draft.weeksText.isEmpty {
+                    Text("周次 \(draft.weeksText)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.vertical, 10)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(draft.checklistLine)
     }
 }
 
@@ -173,8 +231,8 @@ private struct EditableClassDraft: Identifiable {
     var teacher: String
     var location: String
     var weekday: ChinaWeekday
-    var startText: String
-    var endText: String
+    var startMinutes: Int
+    var endMinutes: Int
     var weeksText: String
 
     init(_ draft: ParsedClassDraft) {
@@ -182,8 +240,8 @@ private struct EditableClassDraft: Identifiable {
         teacher = draft.teacher
         location = draft.location
         weekday = draft.weekday
-        startText = ClassSession.clockLabel(draft.startMinutes)
-        endText = ClassSession.clockLabel(draft.endMinutes)
+        startMinutes = draft.startMinutes
+        endMinutes = draft.endMinutes
         if let weeks = draft.weeks, !weeks.isEmpty {
             weeksText = Self.compactWeeks(weeks)
         } else {
@@ -191,12 +249,37 @@ private struct EditableClassDraft: Identifiable {
         }
     }
 
+    var startText: String { ClassSession.clockLabel(startMinutes) }
+    var endText: String { ClassSession.clockLabel(endMinutes) }
+
+    var checklistLine: String {
+        var parts = ["\(weekday.shortLabel) \(startText)-\(endText)"]
+        let room = location.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !room.isEmpty {
+            parts.append(room)
+        }
+        parts.append(title.trimmingCharacters(in: .whitespacesAndNewlines))
+        return parts.joined(separator: " · ")
+    }
+
+    var hasExpandableDetails: Bool {
+        !teacher.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !weeksText.isEmpty
+    }
+
+    static func checklistOrder(_ lhs: EditableClassDraft, _ rhs: EditableClassDraft) -> Bool {
+        if lhs.weekday.rawValue != rhs.weekday.rawValue {
+            return lhs.weekday.rawValue < rhs.weekday.rawValue
+        }
+        if lhs.startMinutes != rhs.startMinutes {
+            return lhs.startMinutes < rhs.startMinutes
+        }
+        return lhs.title < rhs.title
+    }
+
     func asSession() -> ClassSession? {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2 else { return nil }
-        guard let start = TimetableHeuristics.parseClock(startText),
-              let end = TimetableHeuristics.parseClock(endText),
-              end > start else { return nil }
+        guard endMinutes > startMinutes else { return nil }
         let weeks = weeksText.isEmpty
             ? nil
             : (TimetableHeuristics.parseWeeks(weeksText.contains("周") ? weeksText : "\(weeksText)周")
@@ -206,8 +289,8 @@ private struct EditableClassDraft: Identifiable {
             teacher: teacher.trimmingCharacters(in: .whitespacesAndNewlines),
             location: location.trimmingCharacters(in: .whitespacesAndNewlines),
             weekday: weekday,
-            startMinutes: start,
-            endMinutes: end,
+            startMinutes: startMinutes,
+            endMinutes: endMinutes,
             weeks: weeks,
             source: .screenshot
         )
