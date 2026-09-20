@@ -1,5 +1,5 @@
 import Foundation
-import WebKit
+@preconcurrency import WebKit
 import Combine
 
 enum LoginSessionPhase: Equatable {
@@ -21,6 +21,8 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     @Published private(set) var isOnAppList = false
     @Published private(set) var isOnGraduateFrameset = false
     @Published private(set) var timetableHint = ""
+    /// Tile click failed or graduate page is a login wall. Never auto-jump to naked frameset.
+    @Published private(set) var ssoBlocked = false
 
     let webView: WKWebView
     /// Popup created by `window.open` / `target=_blank` when the request has no concrete URL yet.
@@ -69,6 +71,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         isOnAppList = false
         isOnGraduateFrameset = false
         timetableHint = ""
+        ssoBlocked = false
         phase = .loading(SchoolParser.loginURL)
         SafeLog.info("Starting school login WebView (ephemeral). Username \(Redaction.username(credentials.username))")
         dismissPopup()
@@ -82,6 +85,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     /// Never loads naked frameset. Stays on / returns to appList, then clicks the portal tile for SSO.
     private func openGraduateViaPortalSSO() async {
         didClickMyTimetable = false
+        ssoBlocked = false
         await syncURLFromPage(activeWebView)
         let url = currentURL ?? activeWebView.url
         if PortalNavigation.isAppList(url) {
@@ -99,8 +103,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     private func loadSchoolPage(_ url: URL, in webView: WKWebView) {
         if PortalNavigation.isBareGraduateFrameset(url) {
             SafeLog.info("Refusing naked graduate frameset load")
-            timetableHint = Self.appListSSOHint
-            phase = .readyToParse
+            markSSOBlocked(Self.loginWallHint)
             return
         }
         webView.load(URLRequest(url: url))
@@ -126,13 +129,21 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         }
     }
 
-    private static let appListSSOHint = "请点应用列表里的研究生综合管理；直达裸开会丢登录态"
+    static let appListSSOHint = "请点应用列表里的研究生综合管理；直达裸开会丢登录态"
+    static let tileClickFailedHint = "未能点开「研究生综合管理」。请亲手点应用列表里的磁贴。点不开或出现「请登录」时，请关闭本页，改用「导入」里的截图。"
+    static let loginWallHint = "研究生系统在要登录，说明没带上门户会话。不要直达裸 frameset。请关闭本页，改用「导入」里的截图。"
+
+    private func markSSOBlocked(_ message: String) {
+        ssoBlocked = true
+        timetableHint = message
+        phase = .readyToParse
+    }
 
     private func remember(url: URL?) {
         currentURL = url
         isOnAppList = PortalNavigation.isAppList(url)
         isOnGraduateFrameset = PortalNavigation.isGraduateFrameset(url)
-        if isOnAppList {
+        if isOnAppList, !ssoBlocked {
             timetableHint = Self.appListSSOHint
         }
     }
@@ -173,7 +184,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
                 try? await Task.sleep(nanoseconds: 400_000_000)
             }
         }
-        timetableHint = Self.appListSSOHint + "。磁贴脚本未点到，请亲手点；仍失败请改用截图导入。"
+        markSSOBlocked(Self.tileClickFailedHint)
         SafeLog.info("Graduate tile click not found")
     }
 
@@ -184,19 +195,22 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         await clickGraduateTile(from: webView)
     }
 
-    private func detectGraduateLoginWall(from webView: WKWebView) async {
-        guard PortalNavigation.isGraduateHost(currentURL ?? webView.url) else { return }
+    @discardableResult
+    private func detectGraduateLoginWall(from webView: WKWebView) async -> Bool {
+        guard PortalNavigation.isGraduateHost(currentURL ?? webView.url) else { return false }
+        defer { logCookieDomains(from: webView) }
         do {
             let raw = try await webView.evaluateJavaScript(EmbeddedScripts.detectGraduateLoginWall)
             let dict = Self.dictionary(from: raw)
             if dict["loginWall"] as? Bool == true {
-                timetableHint = Self.appListSSOHint + "。当前页在要登录，说明没带上门户会话。"
+                markSSOBlocked(Self.loginWallHint)
                 SafeLog.info("Graduate page login wall")
+                return true
             }
         } catch {
             SafeLog.error("Login-wall script: \(error.localizedDescription)")
         }
-        logCookieDomains(from: webView)
+        return false
     }
 
     private func logCookieDomains(from webView: WKWebView) {
@@ -378,8 +392,10 @@ extension LoginWebViewSession: WKNavigationDelegate {
                 await attemptAutoFillIfNeeded()
             }
             await finishPendingTileClickIfNeeded(from: webView)
-            await openMyTimetableIfPossible(from: webView)
-            await detectGraduateLoginWall(from: webView)
+            let loginWall = await detectGraduateLoginWall(from: webView)
+            if !loginWall, !ssoBlocked {
+                await openMyTimetableIfPossible(from: webView)
+            }
         }
     }
 

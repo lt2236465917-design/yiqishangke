@@ -59,10 +59,10 @@ enum ZgysyjyMeeting {
 
     static func periodKind(from text: String) -> PeriodKind? {
         let compact = text.replacingOccurrences(of: " ", with: "")
+        if let n = numberedPeriod(compact) { return .numbered(n) }
         if compact.contains("上午") { return .bandMorning }
         if compact.contains("下午") { return .bandAfternoon }
         if compact.contains("晚上") || compact.contains("晚课") { return .bandEvening }
-        if let n = numberedPeriod(compact) { return .numbered(n) }
         return nil
     }
 

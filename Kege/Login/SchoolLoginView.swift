@@ -1,5 +1,5 @@
 import SwiftUI
-import WebKit
+@preconcurrency import WebKit
 
 struct SchoolLoginView: View {
     @ObservedObject var session: LoginWebViewSession
@@ -66,65 +66,89 @@ struct SchoolLoginView: View {
     }
 
     private var bannerTitle: String {
-        if session.isOnAppList { return "应用列表：请点研究生综合管理" }
+        if session.ssoBlocked {
+            return "未能进入研究生系统"
+        }
+        if session.isOnAppList {
+            return "应用列表：请点研究生综合管理"
+        }
         switch session.phase {
-        case .idle: "准备打开学校登录页"
-        case .loading: "正在加载"
-        case .autoFilled: "已填入登录名和密码（未填验证码，未点登录）"
-        case .needsManualAuth: "请手动完成验证"
-        case .readyToParse: "请进入课表后再解析"
-        case .parsing: "正在解析本页"
-        case .parsed(let result): result.classes.isEmpty ? "未解析到课程" : "解析到 \(result.classes.count) 门课"
-        case .failed: "登录页受阻"
+        case .idle:
+            return "准备打开学校登录页"
+        case .loading:
+            return "正在加载"
+        case .autoFilled:
+            return "已填入登录名和密码（未填验证码，未点登录）"
+        case .needsManualAuth:
+            return "请手动完成验证"
+        case .readyToParse:
+            return "请进入课表后再解析"
+        case .parsing:
+            return "正在解析本页"
+        case .parsed(let result):
+            return result.classes.isEmpty ? "未解析到课程" : "解析到 \(result.classes.count) 门课"
+        case .failed:
+            return "登录页受阻"
         }
     }
 
     private var bannerDetail: String {
+        if session.ssoBlocked {
+            return session.timetableHint.isEmpty ? LoginWebViewSession.tileClickFailedHint : session.timetableHint
+        }
         if session.isOnAppList {
-            return "请点应用列表里的研究生综合管理；直达裸开会丢登录态"
+            return LoginWebViewSession.appListSSOHint
         }
         switch session.phase {
         case .idle:
-            "凭证只在本机钥匙串，不会上传。"
+            return "凭证只在本机钥匙串，不会上传。"
         case .loading:
-            "目标 \(SchoolParser.loginURL.absoluteString)"
+            return "目标 \(SchoolParser.loginURL.absoluteString)"
         case .autoFilled:
-            "请输入图形验证码，再亲自点蓝色「登录」。应用不会填写或绕过验证码。"
+            return "请输入图形验证码，再亲自点蓝色「登录」。应用不会填写或绕过验证码。"
         case .needsManualAuth(let reason):
-            reason
+            return reason
         case .readyToParse:
             if !session.timetableHint.isEmpty {
-                session.timetableHint
-            } else if session.isOnGraduateFrameset {
-                "研究生系统是框架页。请点左侧「我的课表」后再点「解析本页」。"
-            } else {
-                "进入课表页后再点「解析本页」。"
+                return session.timetableHint
             }
+            if session.isOnGraduateFrameset {
+                return "研究生系统是框架页。请点左侧「我的课表」后再点「解析本页」。"
+            }
+            return "进入课表页后再点「解析本页」。"
         case .parsing:
-            "使用 zgysyjy 解析脚本，不是 AI 点选。"
+            return "使用 zgysyjy 解析脚本，不是 AI 点选。"
         case .parsed(let result):
-            result.blocker ?? result.sourceDescription
+            return result.blocker ?? result.sourceDescription
         case .failed(let message):
-            message
+            return message
         }
     }
 
     private var bannerColor: Color {
+        if session.ssoBlocked { return .orange }
         if session.isOnAppList { return KegeTheme.accent }
         switch session.phase {
-        case .failed: return KegeTheme.accent
-        case .needsManualAuth: return .orange
-        case .parsed(let r): return r.classes.isEmpty ? .orange : KegeTheme.sage
-        case .autoFilled: return KegeTheme.sage
-        default: return KegeTheme.ink.opacity(0.4)
+        case .failed:
+            return KegeTheme.accent
+        case .needsManualAuth:
+            return .orange
+        case .parsed(let r):
+            return r.classes.isEmpty ? .orange : KegeTheme.sage
+        case .autoFilled:
+            return KegeTheme.sage
+        default:
+            return KegeTheme.ink.opacity(0.4)
         }
     }
 
     private var appListOffer: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("请点应用列表里的研究生综合管理；直达裸开会丢登录态")
+            Text(session.ssoBlocked ? "磁贴未走通 SSO" : LoginWebViewSession.appListSSOHint)
                 .font(.subheadline.weight(.semibold))
-            Text("下面按钮会在本页点那个磁贴，走门户单点登录。不要自己打开 frameset.jsp。")
+            Text(session.ssoBlocked
+                 ? "不要打开裸 frameset.jsp。请亲手再点一次磁贴，或关闭后改用「导入」截图。"
+                 : "下面按钮会在本页点那个磁贴，走门户单点登录。不要自己打开 frameset.jsp。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Button {

@@ -44,9 +44,9 @@ final class SettingsStore: ObservableObject {
 
     func isEnabled(_ tier: ReminderTier) -> Bool {
         switch tier {
-        case .minutes15: reminderMinutes15
-        case .hours3: reminderHours3
-        case .day1: reminderDay1
+        case .minutes15: return reminderMinutes15
+        case .hours3: return reminderHours3
+        case .day1: return reminderDay1
         }
     }
 

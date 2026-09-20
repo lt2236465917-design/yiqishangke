@@ -1,9 +1,24 @@
 # 门户探测：中国艺术研究院 IAM / 课表
 
 探测日期：2026-09-20（Cloud Agent 出口网络）。  
-登录线索：`https://iam.zgysyjy.org.cn`（用户提供）。  
-课后课表子菜单 URL：**未核实（UNVERIFIED）**。  
-研究生系统入口（用户核实）：`https://wxt.zgysyjy.org.cn:7792/graduate/frameset.jsp`
+登录线索：`https://iam.zgysyjy.org.cn`（用户提供）。
+
+## SSO 注意（必须）
+
+裸开 `https://wxt.zgysyjy.org.cn:7792/graduate/frameset.jsp` 会显示「请登录 / 数据处理出现错误」（用户核实）。IAM Cookie 不带到 `wxt` 主机。
+
+正确路径：IAM 登录 → **停在** `https://iam.zgysyjy.org.cn/portal/#/appList` → 点应用列表「研究生综合管理」磁贴（门户 SSO / 带 ticket 的 URL）→ 研究生系统落地 frameset → 左侧「我的课表」→「解析本页」。
+
+应用不会在登录后或 appList 上自动 `load` 裸 frameset。磁贴点失败会提示改用截图导入，不会再跳一次「请登录」页。
+
+## 已知 URL
+
+| 用途 | URL | 状态 |
+|---|---|---|
+| IAM 登录 | `https://iam.zgysyjy.org.cn/am/mLogin/login.html` | 已核实（用户模拟器） |
+| 登录后应用列表 | `https://iam.zgysyjy.org.cn/portal/#/appList` | 已核实（用户模拟器） |
+| 研究生 frameset | `https://wxt.zgysyjy.org.cn:7792/graduate/frameset.jsp` | 已核实：SSO **落地**，不是可直达入口 |
+| 课表子菜单 | frameset 内左侧「我的课表」/ 子 frame | **未核实**。地址栏可能一直停在 `frameset.jsp` |
 
 ## 已核实
 
@@ -16,12 +31,8 @@
 | IAM HTTP/HTTPS | 从本环境访问 80/443 **TCP 超时**（约 8–25s，0 字节） | 已核实 |
 | 官网 CDN | `https://www.zgysyjy.org.cn` 可 301 到 `index.html` | 已核实 |
 | 常见教务子域 | `jwxt` / `ehall` / `cas` / `yjs` 等 **无 DNS 记录** | 已核实 |
-| 登录页 URL | 用户模拟器打开 `https://iam.zgysyjy.org.cn/am/mLogin/login.html`（`/am/mLogin/` 下带 query 的变体同样进入该页） | 已核实（用户模拟器） |
 | 登录表单 | tab「用户名密码」；登录名 / 密码 / 图形验证码；蓝色登录按钮 | 已核实（用户模拟器） |
-| 登录后落地 | `https://iam.zgysyjy.org.cn/portal/#/appList` | 已核实（用户模拟器） |
-| 应用磁贴「研究生综合管理…」 | 必须经门户磁贴/SSO 进入。**裸开** `frameset.jsp` 会显示「请登录 / 数据处理出现错误」（用户核实） | 已核实失败（裸 URL） |
-| 研究生系统 frameset | `https://wxt.zgysyjy.org.cn:7792/graduate/frameset.jsp` 是 SSO **落地**页，不是可直达入口 | 已核实（用户） |
-| 课表子菜单 URL | frameset 内左侧菜单 / 子 frame，**准确地址未知**。地址栏可能一直停在 `frameset.jsp` | 未核实 |
+| 应用磁贴「研究生综合管理…」 | 必须经门户磁贴/SSO 进入。**裸开** `frameset.jsp` 会「请登录」 | 已核实失败（裸 URL） |
 | 「我的课表」页 | 用户桌面 Safari：左侧「我的课表」高亮；页眉如 `2026秋第2周`；标题 `-新学期课表-` | 已核实（用户截图/描述，无课程名） |
 | 名单表列 | `课程编号 \| 课程名称 \| 班次 \| 学分 \| 上课时间、地点 \| 选课性质 \| 是否选中` | 已核实（表头契约） |
 | 名单表时间格 | 多行。例：`5周1-上午课-虚拟教室1(主校区)`、`6-11周一-下午课-6406(主校区)`、`3,4周一-下午课-6406(主校区)`。坏行 `…week.null…` / `label.teachtask…` 跳过 | 已核实（形状，无学生课名） |
@@ -29,7 +40,7 @@
 
 ## 「我的课表」解析契约
 
-解析器优先读 **周课表**（有真实上下课时间，适合今日/本周），名单表作补全或兜底。
+解析器优先读 **周课表**（有真实上下课时间，适合今日/本周），名单表作补全或兜底。点「解析本页」会遍历 frameset 的 `window.frames` 与同域 `iframe`/`frame`，合成 `ClassSession` 再写入今日/本周。
 
 时间字符串映射（节次时钟已由用户周课表截图核实，无课程名）：
 
@@ -55,8 +66,6 @@
 
 截图导入：一次多选上午/下午/晚上切片。有开发者 Key 时默认走 DeepSeek `deepseek-flash` 出结构化 JSON；没 Key 才用本机 Vision 网格。识别后用紧凑清单对照网页课表，**不会自动写入**；点「写入本机课表」才落盘。「导入后替换本机课表」默认关闭。未把真实截图或学生课名写入仓库。
 
-「解析本页」会遍历 frameset 的 `window.frames` 与同域 `iframe`/`frame`。登录后必须留在门户应用列表，经「研究生综合管理」磁贴做 SSO；不要直达 `frameset.jsp`。
-
 请把课表子菜单最终 URL（可打码 query）回填到本文件。
 
 ## 推断（不是事实）
@@ -67,16 +76,15 @@
 
 ## 对 v1 的影响
 
-主路径实现为：
-
 1. WKWebView（桌面 Safari UA）打开 `https://iam.zgysyjy.org.cn/am/mLogin/login.html`
 2. 自动填登录名和密码（可用时先切到「用户名密码」tab），**不填验证码、不代点登录**
 3. 图形验证码由用户手输后再点登录；仅短信/二次验证页（无密码框）才整页停填
 4. 登录后**留在** `/portal/#/appList`，**不要**自动打开 frameset。横幅原文：「请点应用列表里的研究生综合管理；直达裸开会丢登录态」
-5. 「进入研究生系统」只在应用列表点「研究生综合管理」磁贴（走 SSO）。未在 appList 时先回到门户再点。裸开 frameset 会丢登录态
-6. 「解析本页」保留，在课表页收集同域 frame / iframe
+5. 「进入研究生系统」只点「研究生综合管理」磁贴或真实 SSO URL。未在 appList 时先回到门户再点。裸开 frameset 会丢登录态
+6. 磁贴失败或研究生页「请登录」：明确提示改用截图，不再跳裸 frameset
+7. 「解析本页」在课表页收集同域 frame / iframe，周课表 + 名单表 → `ClassSession`
 
-若 IAM 在真机也打不开，或登录后找不到课表页：用 **截图导入**（OCR / 可选识图）。应用不会做云端代登。
+若 IAM 在真机也打不开，或登录后找不到课表页：用 **截图导入**。应用不会做云端代登。
 
 ## 人工跟进
 
