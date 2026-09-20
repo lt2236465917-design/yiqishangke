@@ -25,7 +25,7 @@
                 <key>NSExceptionRequiresForwardSecrecy</key>
                 <false/>
                 <key>NSExceptionMinimumTLSVersion</key>
-                <string>TLSv1.0</string>
+                <string>TLSv1.2</string>
             </dict>
             <key>wxt.zgysyjy.org.cn</key>
             <dict>
@@ -36,7 +36,7 @@
                 <key>NSExceptionRequiresForwardSecrecy</key>
                 <false/>
                 <key>NSExceptionMinimumTLSVersion</key>
-                <string>TLSv1.0</string>
+                <string>TLSv1.2</string>
             </dict>
             <key>gscaa.cn</key>
             <dict>

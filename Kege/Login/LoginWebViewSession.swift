@@ -44,7 +44,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
 
     static let desktopSafariUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
 
-    init() {
+    override init() {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = dataStore
         config.processPool = processPool
@@ -550,7 +550,16 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     private func snapshotVisible() async throws -> UIImage {
         let config = WKSnapshotConfiguration()
         config.afterScreenUpdates = true
-        return try await activeWebView.takeSnapshot(with: config)
+        let view = activeWebView
+        return try await withCheckedThrowingContinuation { continuation in
+            view.takeSnapshot(with: config) { image, error in
+                if let image {
+                    continuation.resume(returning: image)
+                    return
+                }
+                continuation.resume(throwing: error ?? ScreenshotImporterError.invalidImage)
+            }
+        }
     }
 
     private func attemptAutoFillIfNeeded() async {
