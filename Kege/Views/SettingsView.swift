@@ -96,7 +96,7 @@ struct SettingsView: View {
             Text("同步")
                 .font(KegeTheme.titleFont)
             KegeCard {
-                Text("首版只支持手动同步：打开学校登录页 → 自动填充 → 你点登录 → 进入课表后解析。")
+                Text("首版只支持手动同步：打开学校登录页 → 自动填充 → 你点登录 → 进入课表后点右上角「录入课表」。")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 Button {

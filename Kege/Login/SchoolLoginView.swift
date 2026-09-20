@@ -2,6 +2,9 @@ import SwiftUI
 @preconcurrency import WebKit
 
 struct SchoolLoginView: View {
+    /// Shown in the login banner so a stale App install is obvious.
+    static let loginSheetStamp = "e7e83cf-v3"
+
     @ObservedObject var session: LoginWebViewSession
     @EnvironmentObject private var settings: SettingsStore
     var onCancel: () -> Void
@@ -82,6 +85,9 @@ struct SchoolLoginView: View {
             Text(verbatim: bannerLine)
                 .font(.subheadline.weight(.semibold))
                 .fixedSize(horizontal: false, vertical: true)
+            Text(verbatim: "build \(Self.loginSheetStamp)")
+                .font(.caption2.monospaced())
+                .foregroundStyle(.tertiary)
             if session.isOnAppList {
                 Button {
                     session.openGraduateManagement()
