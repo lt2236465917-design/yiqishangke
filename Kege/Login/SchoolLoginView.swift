@@ -10,6 +10,9 @@ struct SchoolLoginView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 statusBanner
+                if session.isOnAppList {
+                    appListOffer
+                }
                 ZStack {
                     WebViewContainer(webView: session.webView)
                     if let popup = session.popupWebView {
@@ -37,7 +40,7 @@ struct SchoolLoginView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                resultBar
+                actionBar
             }
         }
     }
@@ -68,7 +71,7 @@ struct SchoolLoginView: View {
         case .loading: "正在加载"
         case .autoFilled: "已填入登录名和密码（未填验证码，未点登录）"
         case .needsManualAuth: "请手动完成验证"
-        case .readyToParse: "请登录后进入课表页"
+        case .readyToParse: "请进入课表后再解析"
         case .parsing: "正在解析本页"
         case .parsed(let result): result.classes.isEmpty ? "未解析到课程" : "解析到 \(result.classes.count) 门课"
         case .failed: "登录页受阻"
@@ -86,7 +89,9 @@ struct SchoolLoginView: View {
         case .needsManualAuth(let reason):
             reason
         case .readyToParse:
-            "登录后会到应用列表。点「研究生综合管理」进入课表页，再点右上角「解析本页」。新窗口会在本页打开。"
+            session.isOnAppList
+                ? "应用列表里的磁贴在 WebView 里点不了。请用「进入研究生系统」，不要点那个磁贴。"
+                : "研究生系统是框架页。请在左侧菜单打开课表后再点「解析本页」。课表子菜单地址尚未核实。"
         case .parsing:
             "使用 zgysyjy 解析脚本，不是 AI 点选。"
         case .parsed(let result):
@@ -106,10 +111,50 @@ struct SchoolLoginView: View {
         }
     }
 
+    private var appListOffer: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("不要点页面里的「研究生综合管理」磁贴")
+                .font(.subheadline.weight(.semibold))
+            Text("那个磁贴在本应用 WebView 里无效。请用下面的按钮打开已核实地址。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button {
+                session.openGraduateManagement()
+            } label: {
+                Text("进入研究生系统")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(KegeTheme.accent)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(KegeTheme.accent.opacity(0.12))
+    }
+
     @ViewBuilder
-    private var resultBar: some View {
-        if case .parsed(let result) = session.phase {
-            VStack(spacing: 10) {
+    private var actionBar: some View {
+        VStack(spacing: 10) {
+            Button {
+                session.openGraduateManagement()
+            } label: {
+                Text("进入研究生系统")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(KegeTheme.accent)
+
+            Button {
+                Task { await session.userTappedParseCurrentPage() }
+            } label: {
+                Text("解析本页")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+
+            if case .parsed(let result) = session.phase {
                 if result.classes.isEmpty {
                     Text("主路径解析未拿到课表。可继续换页再解析，或关闭后改用截图导入。")
                         .font(.footnote)
@@ -123,12 +168,12 @@ struct SchoolLoginView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(KegeTheme.accent)
+                    .tint(KegeTheme.sage)
                 }
             }
-            .padding()
-            .background(.ultraThinMaterial)
         }
+        .padding()
+        .background(.ultraThinMaterial)
     }
 }
 

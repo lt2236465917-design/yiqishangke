@@ -18,12 +18,14 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     @Published var phase: LoginSessionPhase = .idle
     @Published var currentURL: URL?
     @Published var didAttemptAutoFill = false
+    @Published private(set) var isOnAppList = false
 
     let webView: WKWebView
     /// Popup created by `window.open` / `target=_blank` when the request has no concrete URL yet.
     @Published var popupWebView: WKWebView?
     private let parser: SchoolParsing
     private var credentials: SchoolCredentials?
+    private var didOpenGraduate = false
 
     static let desktopSafariUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
 
@@ -56,10 +58,45 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     func start(credentials: SchoolCredentials) {
         self.credentials = credentials
         didAttemptAutoFill = false
+        didOpenGraduate = false
+        isOnAppList = false
         phase = .loading(SchoolParser.loginURL)
         SafeLog.info("Starting school login WebView (ephemeral). Username \(Redaction.username(credentials.username))")
         dismissPopup()
         webView.load(URLRequest(url: SchoolParser.loginURL))
+    }
+
+    func openGraduateManagement() {
+        didOpenGraduate = true
+        isOnAppList = false
+        dismissPopup()
+        phase = .readyToParse
+        SafeLog.info("Opening graduate frameset")
+        webView.load(URLRequest(url: SchoolParser.graduateFramesetURL))
+    }
+
+    private func remember(url: URL?) {
+        currentURL = url
+        isOnAppList = PortalNavigation.isAppList(url)
+    }
+
+    private func syncURLFromPage(_ webView: WKWebView) async {
+        if let href = try? await webView.evaluateJavaScript("String(location.href)") as? String,
+           let url = URL(string: href) {
+            remember(url: url)
+            return
+        }
+        remember(url: webView.url)
+    }
+
+    private func openGraduateIfReady(from webView: WKWebView) async {
+        await syncURLFromPage(webView)
+        guard !didOpenGraduate else { return }
+        guard PortalNavigation.shouldOpenGraduate(from: currentURL ?? webView.url) else { return }
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        await syncURLFromPage(webView)
+        guard !didOpenGraduate, PortalNavigation.shouldOpenGraduate(from: currentURL ?? webView.url) else { return }
+        openGraduateManagement()
     }
 
     func userTappedParseCurrentPage() async {
@@ -175,9 +212,13 @@ extension LoginWebViewSession: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        currentURL = webView.url
+        remember(url: webView.url)
         if case .needsManualAuth = phase { return }
         if case .parsed = phase { return }
+        if PortalNavigation.isGraduateFrameset(webView.url) {
+            phase = .readyToParse
+            return
+        }
         if PortalNavigation.isSchoolPortal(webView.url) {
             phase = .readyToParse
             return
@@ -188,8 +229,8 @@ extension LoginWebViewSession: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        currentURL = webView.url
-        if PortalNavigation.isSchoolPortal(webView.url) {
+        remember(url: webView.url)
+        if PortalNavigation.isGraduateFrameset(webView.url) || PortalNavigation.isSchoolPortal(webView.url) {
             if case .parsed = phase { } else {
                 phase = .readyToParse
             }
@@ -200,6 +241,7 @@ extension LoginWebViewSession: WKNavigationDelegate {
                 try? await Task.sleep(nanoseconds: 450_000_000)
                 await attemptAutoFillIfNeeded()
             }
+            await openGraduateIfReady(from: webView)
         }
     }
 
@@ -265,6 +307,7 @@ extension LoginWebViewSession: WKUIDelegate {
 enum PortalNavigation {
     static let allowedSuffixes = [
         "zgysyjy.org.cn",
+        "wxt.zgysyjy.org.cn",
         "gscaa.cn"
     ]
 
@@ -274,12 +317,32 @@ enum PortalNavigation {
         return url.host?.isEmpty == false
     }
 
+    static func isLoginPage(_ url: URL?) -> Bool {
+        guard let url else { return false }
+        let path = url.path.lowercased()
+        return path.contains("/am/mlogin") || path.contains("login.html")
+    }
+
+    static func isGraduateFrameset(_ url: URL?) -> Bool {
+        ZgysyjyParser.isGraduateFrameset(url)
+    }
+
+    static func isAppList(_ url: URL?) -> Bool {
+        guard let url else { return false }
+        if isLoginPage(url) || isGraduateFrameset(url) { return false }
+        let blob = (url.absoluteString + " " + url.path + " " + (url.fragment ?? "")).lowercased()
+        return blob.contains("applist") || blob.contains("app-list") || blob.contains("/portal")
+    }
+
     static func isSchoolPortal(_ url: URL?) -> Bool {
         guard let url, let host = url.host?.lowercased() else { return false }
         guard isAllowedHost(host) else { return false }
-        let path = url.path.lowercased()
-        let fragment = (url.fragment ?? "").lowercased()
-        return path.contains("/portal") || fragment.contains("applist") || fragment.contains("app-list")
+        if isLoginPage(url) || isGraduateFrameset(url) { return false }
+        return isAppList(url)
+    }
+
+    static func shouldOpenGraduate(from url: URL?) -> Bool {
+        isAppList(url) || isSchoolPortal(url)
     }
 
     static func allows(_ url: URL, from current: URL?) -> Bool {

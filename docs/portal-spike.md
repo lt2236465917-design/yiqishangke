@@ -2,7 +2,8 @@
 
 探测日期：2026-09-20（Cloud Agent 出口网络）。  
 登录线索：`https://iam.zgysyjy.org.cn`（用户提供）。  
-课后课表页 URL：**未核实（UNVERIFIED）**。
+课后课表子菜单 URL：**未核实（UNVERIFIED）**。  
+研究生系统入口（用户核实）：`https://wxt.zgysyjy.org.cn:7792/graduate/frameset.jsp`
 
 ## 已核实
 
@@ -18,8 +19,9 @@
 | 登录页 URL | 用户模拟器打开 `https://iam.zgysyjy.org.cn/am/mLogin/login.html`（`/am/mLogin/` 下带 query 的变体同样进入该页） | 已核实（用户模拟器） |
 | 登录表单 | tab「用户名密码」；登录名 / 密码 / 图形验证码；蓝色登录按钮 | 已核实（用户模拟器） |
 | 登录后落地 | `https://iam.zgysyjy.org.cn/portal/#/appList` | 已核实（用户模拟器） |
-| 应用磁贴「研究生综合管理…」 | 用户在应用内 WKWebView 点击无反应（推断 `target=_blank` / `window.open` 被拦，或移动 UA）。本提交改为桌面 Safari UA + 同页/`createWebViewWith` 接新窗口，**待用户再测** | 已核实失败；修复待复核 |
-| 登录后课表路径 | 仍未知。须先能打开研究生综合管理应用 | 未核实 |
+| 应用磁贴「研究生综合管理…」 | 用户在应用内 WKWebView 点击**仍然无效**。不要依赖磁贴。 | 已核实失败 |
+| 研究生系统 frameset | `https://wxt.zgysyjy.org.cn:7792/graduate/frameset.jsp`（SSO 后可开）。应用内用按钮「进入研究生系统」直达；appList 会自动跳或弹出横幅 | 已核实（用户） |
+| 课表子菜单 URL | frameset 内左侧菜单 / 子 frame，**准确地址未知** | 未核实 |
 
 ## 推断（不是事实）
 
@@ -34,11 +36,11 @@
 1. WKWebView（桌面 Safari UA）打开 `https://iam.zgysyjy.org.cn/am/mLogin/login.html`
 2. 自动填登录名和密码（可用时先切到「用户名密码」tab），**不填验证码、不代点登录**
 3. 图形验证码由用户手输后再点登录；仅短信/二次验证页（无密码框）才整页停填
-4. 登录后到 `/portal/#/appList`；点「研究生综合管理…」应在同一同步页打开（`window.open` / `target=_blank` 不再丢弃）
-5. 进入课表后点「解析本页」，跑 `ZgysyjyParser` 桩
+4. 登录后到 `/portal/#/appList`。磁贴在 WebView 里点不了：用同步页按钮「进入研究生系统」打开 frameset，或等短延迟自动跳转
+5. frameset 里打开课表后再「解析本页」（会收集同域 frame）。TODO：课表子菜单准确 URL 未核实
 
 若 IAM 在真机也打不开，或登录后找不到课表页：用 **截图导入**（OCR / 可选识图）。应用不会做云端代登。
 
 ## 人工跟进
 
-请在校园网或 VPN 下用 Safari 走完登录，把 **课表页最终 URL**（可打码 query）回填到本文件，并补进 `ZgysyjyParser.candidateTimetableHints`。
+请从 frameset 点进课表后，把 **课表页最终 URL**（可打码 query）回填到本文件，并补进 `ZgysyjyParser` 的 TODO。

@@ -161,16 +161,40 @@ enum EmbeddedScripts {
 
     static let extractPage = """
     (function() {
-      const clone = document.documentElement.cloneNode(true);
-      clone.querySelectorAll('input[type="password"]').forEach((el) => {
-        el.setAttribute("value", "");
-        el.value = "";
-      });
+      const seen = [];
+      const walk = (win) => {
+        const piece = { url: "", html: "", innerText: "" };
+        try {
+          piece.url = win.location.href;
+          if (seen.indexOf(piece.url) !== -1) return piece;
+          seen.push(piece.url);
+          const doc = win.document;
+          const clone = doc.documentElement ? doc.documentElement.cloneNode(true) : null;
+          if (clone) {
+            clone.querySelectorAll('input[type="password"]').forEach((el) => {
+              el.setAttribute("value", "");
+              el.value = "";
+            });
+            piece.html = clone.outerHTML || "";
+          }
+          piece.innerText = doc.body ? doc.body.innerText : "";
+          const frames = win.frames;
+          for (let i = 0; i < frames.length; i += 1) {
+            try {
+              const child = walk(frames[i]);
+              piece.html += "\\n<!-- frame:" + child.url + " -->\\n" + child.html;
+              piece.innerText += "\\n" + child.innerText;
+            } catch (e) {}
+          }
+        } catch (e) {}
+        return piece;
+      };
+      const root = walk(window);
       return {
-        url: location.href,
+        url: root.url || location.href,
         title: document.title || "",
-        html: clone.outerHTML || "",
-        innerText: document.body ? document.body.innerText : ""
+        html: root.html,
+        innerText: root.innerText
       };
     })();
     """

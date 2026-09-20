@@ -22,6 +22,19 @@
                 <true/>
                 <key>NSExceptionRequiresForwardSecrecy</key>
                 <false/>
+                <key>NSExceptionMinimumTLSVersion</key>
+                <string>TLSv1.0</string>
+            </dict>
+            <key>wxt.zgysyjy.org.cn</key>
+            <dict>
+                <key>NSIncludesSubdomains</key>
+                <true/>
+                <key>NSExceptionAllowsInsecureHTTPLoads</key>
+                <true/>
+                <key>NSExceptionRequiresForwardSecrecy</key>
+                <false/>
+                <key>NSExceptionMinimumTLSVersion</key>
+                <string>TLSv1.0</string>
             </dict>
             <key>gscaa.cn</key>
             <dict>
