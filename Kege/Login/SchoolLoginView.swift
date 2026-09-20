@@ -89,9 +89,15 @@ struct SchoolLoginView: View {
         case .needsManualAuth(let reason):
             reason
         case .readyToParse:
-            session.isOnAppList
-                ? "应用列表里的磁贴在 WebView 里点不了。请用「进入研究生系统」，不要点那个磁贴。"
-                : "研究生系统是框架页。请在左侧菜单打开课表后再点「解析本页」。课表子菜单地址尚未核实。"
+            if session.isOnAppList {
+                "应用列表里的磁贴在 WebView 里点不了。请用「进入研究生系统」，不要点那个磁贴。"
+            } else if session.isOnGraduateFrameset || !session.timetableHint.isEmpty {
+                session.timetableHint.isEmpty
+                    ? "研究生系统是框架页。请点左侧「我的课表」后再点「解析本页」。解析会读取同域 frame。"
+                    : session.timetableHint
+            } else {
+                "进入课表页后再点「解析本页」。课表子菜单准确地址尚未核实。"
+            }
         case .parsing:
             "使用 zgysyjy 解析脚本，不是 AI 点选。"
         case .parsed(let result):

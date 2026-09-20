@@ -12,29 +12,33 @@ struct ZgysyjyParser: SchoolParsing {
     static let candidateTimetableHints: [String] = [
         "wdkb", "xskb", "kbcx", "timetable", "courseTable", "course-table",
         "kbgl", "pygc", "wdkc", "mycourse", "student/course",
-        "课表", "我的课表", "课程表", "frameset", "graduate"
+        "课表", "我的课表", "课程表", "新学期课表", "frameset", "graduate"
     ]
 
     func parse(html: String, pageURL: URL?, innerText: String?) -> ParseResult {
         if html.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (innerText ?? "").isEmpty {
             return ParseResult(
                 classes: [],
-                sourceDescription: "zgysyjy-stub",
+                sourceDescription: "zgysyjy-empty",
                 blocker: SchoolParserError.emptyPage.localizedDescription,
                 rawExcerpt: nil
             )
         }
 
         var drafts: [ParsedClassDraft] = []
-
         if let jsonDrafts = extractEmbeddedJSON(from: html) {
             drafts.append(contentsOf: jsonDrafts)
         }
-        drafts.append(contentsOf: parseHTMLTables(html))
-        if let innerText {
-            drafts.append(contentsOf: TimetableHeuristics.drafts(fromPlainText: innerText))
+
+        let tables = parseSchoolTables(html)
+        drafts.append(contentsOf: tables.drafts)
+
+        if tables.drafts.isEmpty {
+            if let innerText {
+                drafts.append(contentsOf: TimetableHeuristics.drafts(fromPlainText: innerText))
+            }
+            drafts.append(contentsOf: TimetableHeuristics.drafts(fromPlainText: stripTags(html)))
         }
-        drafts.append(contentsOf: TimetableHeuristics.drafts(fromPlainText: stripTags(html)))
         drafts = TimetableHeuristics.unique(drafts)
 
         let looksLikeTimetable = pageLooksLikeTimetable(html: html, url: pageURL, text: innerText)
@@ -44,13 +48,13 @@ struct ZgysyjyParser: SchoolParsing {
                 blocker = SchoolParserError.noTableFound.localizedDescription
             } else if Self.isGraduateFrameset(pageURL) {
                 blocker = """
-                当前是研究生系统框架页（frameset.jsp），课表通常在子 frame 或左侧菜单里。\
-                TODO: 课表子菜单的准确 URL 尚未核实。请点到「课表 / 我的课表」后再解析本页；若仍失败请用截图导入。
+                当前是研究生系统框架页（frameset.jsp），课表在子 frame。\
+                请点左侧「我的课表」后再解析本页。课表子菜单准确 URL 尚未核实。
                 """
             } else {
                 blocker = """
                 未识别到课表。请进入研究生系统后打开「我的课表」，再点「解析本页」。\
-                TODO: 课表子菜单 URL 未知。若仍失败请改用截图导入。
+                课表子菜单 URL 未知。若仍失败请改用截图导入。
                 """
             }
         }
@@ -58,23 +62,194 @@ struct ZgysyjyParser: SchoolParsing {
         let excerpt = String((innerText ?? stripTags(html)).prefix(400))
         return ParseResult(
             classes: drafts,
-            sourceDescription: "zgysyjy-stub \(pageURL?.absoluteString ?? "no-url")",
+            sourceDescription: "zgysyjy grid=\(tables.gridCount) list=\(tables.listCount) \(pageURL?.absoluteString ?? "no-url")",
             blocker: blocker,
             rawExcerpt: excerpt
         )
     }
 
     func pageLooksLikeTimetable(html: String, url: URL?, text: String?) -> Bool {
+        let hay = html + (text ?? "")
+        if looksLikeListTable(hay) || looksLikeWeeklyGrid(hay) { return true }
+        if hay.contains("新学期课表") || hay.contains("上课时间、地点") { return true }
         if Self.isGraduateFrameset(url) { return false }
-        let hay = ((url?.absoluteString ?? "") + html + (text ?? "")).lowercased()
-        return Self.candidateTimetableHints.contains { hay.contains($0.lowercased()) }
+        let blob = ((url?.absoluteString ?? "") + hay).lowercased()
+        return Self.candidateTimetableHints.contains { blob.contains($0.lowercased()) }
     }
 
     static func isGraduateFrameset(_ url: URL?) -> Bool {
         guard let url else { return false }
-        let host = url.host?.lowercased() ?? ""
         let path = url.path.lowercased()
-        return host.contains("wxt.zgysyjy.org.cn") || path.contains("/graduate/frameset.jsp")
+        return path.contains("/graduate/frameset.jsp") || path.hasSuffix("frameset.jsp")
+    }
+
+    static func isGraduateHost(_ url: URL?) -> Bool {
+        url?.host?.lowercased().contains("wxt.zgysyjy.org.cn") == true
+    }
+
+    private func looksLikeListTable(_ text: String) -> Bool {
+        text.contains("课程编号") && text.contains("课程名称") && text.contains("上课时间")
+    }
+
+    private func looksLikeWeeklyGrid(_ text: String) -> Bool {
+        let hasDays = text.contains("周一") && text.contains("周日")
+        let hasPeriod = text.contains("上午课") || text.contains("下午课")
+        return hasDays && hasPeriod
+    }
+
+    private struct TableParse {
+        var drafts: [ParsedClassDraft]
+        var gridCount: Int
+        var listCount: Int
+    }
+
+    private func parseSchoolTables(_ html: String) -> TableParse {
+        var grid: [ParsedClassDraft] = []
+        var list: [ParsedClassDraft] = []
+        for table in HTMLTableSlice.tables(in: html) {
+            if let weekly = parseWeeklyGrid(table), !weekly.isEmpty {
+                grid.append(contentsOf: weekly)
+                continue
+            }
+            if let rows = parseListTable(table), !rows.isEmpty {
+                list.append(contentsOf: rows)
+            }
+        }
+        return TableParse(
+            drafts: mergeGridPreferred(grid, list: list),
+            gridCount: grid.count,
+            listCount: list.count
+        )
+    }
+
+    /// Weekly grid wins on title+weekday (real clocks). List fills gaps and empty fields.
+    private func mergeGridPreferred(_ grid: [ParsedClassDraft], list: [ParsedClassDraft]) -> [ParsedClassDraft] {
+        var result = grid
+        for extra in list {
+            if let index = result.firstIndex(where: { $0.title == extra.title && $0.weekday == extra.weekday }) {
+                if result[index].location.isEmpty { result[index].location = extra.location }
+                if result[index].teacher.isEmpty { result[index].teacher = extra.teacher }
+                if result[index].weeks == nil { result[index].weeks = extra.weeks }
+                if result[index].notes.isEmpty { result[index].notes = extra.notes }
+            } else {
+                result.append(extra)
+            }
+        }
+        return TimetableHeuristics.unique(result)
+    }
+
+    private func parseListTable(_ table: HTMLTableSlice) -> [ParsedClassDraft]? {
+        guard let header = table.rows.first(where: isListHeader) else { return nil }
+        let index = columnIndex(header)
+        guard let titleIdx = index["title"], let meetingIdx = index["meeting"] else { return nil }
+
+        var drafts: [ParsedClassDraft] = []
+        for row in table.rows where !isListHeader(row) && row.count >= 3 {
+            let title = cell(row, titleIdx)
+            guard title.count >= 2 else { continue }
+            if isUnselected(cell(row, index["selected"])) { continue }
+
+            let meetings = ZgysyjyMeeting.parseCell(cell(row, meetingIdx))
+            guard !meetings.isEmpty else { continue }
+
+            let code = cell(row, index["code"])
+            let klass = cell(row, index["class"])
+            let credit = cell(row, index["credit"])
+            let nature = cell(row, index["nature"])
+            let notes = [code, klass, credit, nature].filter { !$0.isEmpty }.joined(separator: " · ")
+
+            for meeting in meetings {
+                drafts.append(
+                    ParsedClassDraft(
+                        title: title,
+                        teacher: "",
+                        location: meeting.room,
+                        weekday: meeting.weekday,
+                        startMinutes: meeting.start,
+                        endMinutes: meeting.end,
+                        weeks: meeting.weeks,
+                        notes: notes
+                    )
+                )
+            }
+        }
+        return drafts
+    }
+
+    private func isListHeader(_ row: [String]) -> Bool {
+        let joined = row.joined()
+        return joined.contains("课程编号") && joined.contains("课程名称") && joined.contains("上课时间")
+    }
+
+    private func isUnselected(_ value: String?) -> Bool {
+        guard let value else { return false }
+        let t = value.replacingOccurrences(of: " ", with: "")
+        return t == "否" || t == "未选" || t == "未选中" || t.lowercased() == "n" || t.lowercased() == "false"
+    }
+
+    private func columnIndex(_ header: [String]) -> [String: Int] {
+        var map: [String: Int] = [:]
+        for (i, raw) in header.enumerated() {
+            let h = raw.replacingOccurrences(of: " ", with: "")
+            if h.contains("课程编号") { map["code"] = i }
+            else if h.contains("课程名称") { map["title"] = i }
+            else if h.contains("班次") { map["class"] = i }
+            else if h.contains("学分") { map["credit"] = i }
+            else if h.contains("上课时间") { map["meeting"] = i }
+            else if h.contains("选课性质") { map["nature"] = i }
+            else if h.contains("是否选中") { map["selected"] = i }
+        }
+        return map
+    }
+
+    private func parseWeeklyGrid(_ table: HTMLTableSlice) -> [ParsedClassDraft]? {
+        var dayColumns: [Int: ChinaWeekday] = [:]
+        var drafts: [ParsedClassDraft] = []
+        for row in table.rows {
+            let headerDays = weekdayColumns(row)
+            if headerDays.count >= 3 {
+                dayColumns = headerDays
+                continue
+            }
+            guard !dayColumns.isEmpty else { continue }
+            guard let minutes = rowPeriodMinutes(row) else { continue }
+            for (col, weekday) in dayColumns {
+                let text = cell(row, col)
+                guard !text.isEmpty else { continue }
+                if ChinaWeekday.parseColumnHeader(text) != nil && text.count <= 8 { continue }
+                if let draft = ZgysyjyMeeting.parseGridCell(text, weekday: weekday, start: minutes.0, end: minutes.1) {
+                    drafts.append(draft)
+                }
+            }
+        }
+        return drafts.isEmpty ? nil : drafts
+    }
+
+    private func weekdayColumns(_ row: [String]) -> [Int: ChinaWeekday] {
+        var map: [Int: ChinaWeekday] = [:]
+        for (i, raw) in row.enumerated() {
+            let compact = raw.replacingOccurrences(of: " ", with: "")
+            if let day = ChinaWeekday.parseColumnHeader(compact) {
+                map[i] = day
+            }
+        }
+        return map
+    }
+
+    private func rowPeriodMinutes(_ row: [String]) -> (Int, Int)? {
+        let prefix = row.prefix(3).joined(separator: "\n")
+        if let clock = ZgysyjyMeeting.parseClockRange(prefix) {
+            return clock
+        }
+        if let period = ZgysyjyMeeting.periodMinutes(from: prefix) {
+            return period
+        }
+        return nil
+    }
+
+    private func cell(_ row: [String], _ index: Int?) -> String {
+        guard let index, row.indices.contains(index) else { return "" }
+        return row[index].trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func extractEmbeddedJSON(from html: String) -> [ParsedClassDraft]? {
@@ -95,37 +270,6 @@ struct ZgysyjyParser: SchoolParsing {
         return drafts.isEmpty ? nil : drafts
     }
 
-    private func parseHTMLTables(_ html: String) -> [ParsedClassDraft] {
-        var drafts: [ParsedClassDraft] = []
-        let rowPattern = #"<tr[^>]*>([\s\S]*?)</tr>"#
-        let cellPattern = #"<t[dh][^>]*>([\s\S]*?)</t[dh]>"#
-        guard let rowRegex = try? NSRegularExpression(pattern: rowPattern, options: [.caseInsensitive]),
-              let cellRegex = try? NSRegularExpression(pattern: cellPattern, options: [.caseInsensitive]) else {
-            return []
-        }
-        let ns = html as NSString
-        let rows = rowRegex.matches(in: html, range: NSRange(location: 0, length: ns.length))
-        var headers: [String] = []
-        for (index, row) in rows.enumerated() {
-            let rowHTML = ns.substring(with: row.range(at: 1))
-            let rowNS = rowHTML as NSString
-            let cells = cellRegex.matches(in: rowHTML, range: NSRange(location: 0, length: rowNS.length))
-                .map { stripTags(rowNS.substring(with: $0.range(at: 1))) }
-            if index == 0 || cells.contains(where: { $0.contains("课程") || $0.contains("星期") }) {
-                headers = cells
-                continue
-            }
-            if cells.count >= 3 {
-                let joined = zip(headers.isEmpty ? cells.map { _ in "" } : headers, cells)
-                    .map { $0.isEmpty ? $1 : "\($0):\($1)" }
-                    .joined(separator: " ")
-                drafts.append(contentsOf: TimetableHeuristics.drafts(fromPlainText: joined))
-                drafts.append(contentsOf: TimetableHeuristics.drafts(fromPlainText: cells.joined(separator: " ")))
-            }
-        }
-        return drafts
-    }
-
     private func stripTags(_ html: String) -> String {
         html.replacingOccurrences(of: #"<script[\s\S]*?</script>"#, with: " ", options: .regularExpression)
             .replacingOccurrences(of: #"<style[\s\S]*?</style>"#, with: " ", options: .regularExpression)
@@ -133,6 +277,128 @@ struct ZgysyjyParser: SchoolParsing {
             .replacingOccurrences(of: "&nbsp;", with: " ")
             .replacingOccurrences(of: "&amp;", with: "&")
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+    }
+}
+
+/// Flatten HTML tables, expanding rowspan/colspan so column indexes stay stable.
+struct HTMLTableSlice {
+    var rows: [[String]]
+
+    static func tables(in html: String) -> [HTMLTableSlice] {
+        extractTableHTML(html).compactMap { slice(from: $0) }
+    }
+
+    private static func extractTableHTML(_ html: String) -> [String] {
+        var tables: [String] = []
+        var search = html.startIndex
+        while search < html.endIndex,
+              let start = html.range(of: "<table", options: .caseInsensitive, range: search..<html.endIndex) {
+            var depth = 0
+            var i = start.lowerBound
+            var end: String.Index?
+            while i < html.endIndex {
+                if html[i...].prefix(6).lowercased() == "<table" {
+                    depth += 1
+                    i = html.index(i, offsetBy: 6, limitedBy: html.endIndex) ?? html.endIndex
+                    continue
+                }
+                if html[i...].prefix(8).lowercased() == "</table>" {
+                    depth -= 1
+                    if depth == 0 {
+                        end = html.index(i, offsetBy: 8, limitedBy: html.endIndex) ?? html.endIndex
+                        break
+                    }
+                    i = html.index(i, offsetBy: 8, limitedBy: html.endIndex) ?? html.endIndex
+                    continue
+                }
+                i = html.index(after: i)
+            }
+            if let end {
+                tables.append(String(html[start.lowerBound..<end]))
+                search = end
+            } else {
+                break
+            }
+        }
+        return tables
+    }
+
+    private static func slice(from tableHTML: String) -> HTMLTableSlice? {
+        guard let rowRegex = try? NSRegularExpression(pattern: #"<tr[^>]*>([\s\S]*?)</tr>"#, options: [.caseInsensitive]),
+              let cellRegex = try? NSRegularExpression(pattern: #"<t[dh]([^>]*)>([\s\S]*?)</t[dh]>"#, options: [.caseInsensitive]) else {
+            return nil
+        }
+        let ns = tableHTML as NSString
+        let rowMatches = rowRegex.matches(in: tableHTML, range: NSRange(location: 0, length: ns.length))
+        var carry: [Int: (text: String, left: Int)] = [:]
+        var rows: [[String]] = []
+        for rowMatch in rowMatches {
+            let rowHTML = ns.substring(with: rowMatch.range(at: 1))
+            let rowNS = rowHTML as NSString
+            let cells = cellRegex.matches(in: rowHTML, range: NSRange(location: 0, length: rowNS.length)).map { match -> (text: String, rowspan: Int, colspan: Int) in
+                let attrs = rowNS.substring(with: match.range(at: 1))
+                let inner = rowNS.substring(with: match.range(at: 2))
+                return (cellText(inner), span(attrs, "rowspan"), span(attrs, "colspan"))
+            }
+            var col = 0
+            var cellIndex = 0
+            var output: [String] = []
+            while cellIndex < cells.count || carry[col] != nil {
+                if let held = carry[col], held.left > 0 {
+                    output.append(held.text)
+                    if held.left == 1 {
+                        carry.removeValue(forKey: col)
+                    } else {
+                        carry[col] = (held.text, held.left - 1)
+                    }
+                    col += 1
+                    continue
+                }
+                guard cellIndex < cells.count else { break }
+                let cell = cells[cellIndex]
+                cellIndex += 1
+                for _ in 0..<max(1, cell.colspan) {
+                    output.append(cell.text)
+                    if cell.rowspan > 1 {
+                        carry[col] = (cell.text, cell.rowspan - 1)
+                    }
+                    col += 1
+                }
+            }
+            if !output.isEmpty {
+                rows.append(output)
+            }
+        }
+        return rows.isEmpty ? nil : HTMLTableSlice(rows: rows)
+    }
+
+    private static func span(_ attrs: String, _ name: String) -> Int {
+        let pattern = #"\#(name)\s*=\s*["']?(\d+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]),
+              let match = regex.firstMatch(in: attrs, range: NSRange(attrs.startIndex..., in: attrs)),
+              let range = Range(match.range(at: 1), in: attrs),
+              let value = Int(attrs[range]) else {
+            return 1
+        }
+        return max(1, value)
+    }
+
+    private static func cellText(_ html: String) -> String {
+        html
+            .replacingOccurrences(of: #"<br\s*/?>"#, with: "\n", options: [.regularExpression, .caseInsensitive])
+            .replacingOccurrences(of: "</p>", with: "\n", options: .caseInsensitive)
+            .replacingOccurrences(of: "</div>", with: "\n", options: .caseInsensitive)
+            .replacingOccurrences(of: "</li>", with: "\n", options: .caseInsensitive)
+            .replacingOccurrences(of: #"<script[\s\S]*?</script>"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"<[^>]+>"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .replacingOccurrences(of: #"[\t\f]+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

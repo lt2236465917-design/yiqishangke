@@ -162,13 +162,24 @@ enum EmbeddedScripts {
     static let extractPage = """
     (function() {
       const seen = [];
-      const walk = (win) => {
-        const piece = { url: "", html: "", innerText: "" };
+      const pieces = [];
+      const scoreOf = (url, title, text, html) => {
+        const blob = (url || "") + (title || "") + (text || "") + (html || "");
+        let n = 0;
+        if (blob.indexOf("课程编号") !== -1 && blob.indexOf("课程名称") !== -1) n += 8;
+        if (blob.indexOf("上课时间") !== -1) n += 4;
+        if (blob.indexOf("新学期课表") !== -1 || blob.indexOf("我的课表") !== -1) n += 3;
+        if (blob.indexOf("周一") !== -1 && (blob.indexOf("上午课") !== -1 || blob.indexOf("下午课") !== -1)) n += 10;
+        return n;
+      };
+      const read = (win) => {
+        const piece = { url: "", title: "", html: "", innerText: "", score: 0 };
         try {
           piece.url = win.location.href;
-          if (seen.indexOf(piece.url) !== -1) return piece;
+          if (seen.indexOf(piece.url) !== -1) return;
           seen.push(piece.url);
           const doc = win.document;
+          piece.title = doc.title || "";
           const clone = doc.documentElement ? doc.documentElement.cloneNode(true) : null;
           if (clone) {
             clone.querySelectorAll('input[type="password"]').forEach((el) => {
@@ -178,24 +189,98 @@ enum EmbeddedScripts {
             piece.html = clone.outerHTML || "";
           }
           piece.innerText = doc.body ? doc.body.innerText : "";
-          const frames = win.frames;
-          for (let i = 0; i < frames.length; i += 1) {
-            try {
-              const child = walk(frames[i]);
-              piece.html += "\\n<!-- frame:" + child.url + " -->\\n" + child.html;
-              piece.innerText += "\\n" + child.innerText;
-            } catch (e) {}
+          piece.score = scoreOf(piece.url, piece.title, piece.innerText, piece.html);
+          pieces.push(piece);
+          const kids = [];
+          try {
+            for (let i = 0; i < win.frames.length; i += 1) kids.push(win.frames[i]);
+          } catch (e) {}
+          try {
+            doc.querySelectorAll("iframe, frame").forEach((el) => {
+              try { if (el.contentWindow) kids.push(el.contentWindow); } catch (e2) {}
+            });
+          } catch (e) {}
+          kids.forEach((child) => {
+            try { read(child); } catch (e) {}
+          });
+        } catch (e) {}
+      };
+      read(window);
+      let best = pieces[0] || { url: location.href, title: document.title || "", html: "", innerText: "", score: 0 };
+      pieces.forEach((p) => { if (p.score > best.score) best = p; });
+      let html = "";
+      let innerText = "";
+      pieces.forEach((p) => {
+        if (!p.html) return;
+        html += "\\n<!-- frame:" + p.url + " -->\\n" + p.html;
+        innerText += "\\n" + (p.innerText || "");
+      });
+      return {
+        url: best.url || location.href,
+        title: best.title || document.title || "",
+        html,
+        innerText
+      };
+    })();
+    """
+
+    /// Click left-nav 「我的课表」 inside the graduate frameset. Never clicks 登录.
+    static let openMyTimetable = """
+    (function() {
+      const seen = [];
+      const forbidden = /登录|立即登录|退出|注销/;
+      const result = { clicked: false, text: "", href: "", frameUrl: "" };
+      const labelOf = (el) => ((el.innerText || el.textContent || "") + "").replace(/\\s+/g, "");
+      const tryClick = (el, win) => {
+        const text = labelOf(el);
+        if (!text || forbidden.test(text)) return false;
+        try { el.click(); } catch (e) { return false; }
+        result.clicked = true;
+        result.text = text;
+        result.href = el.href || el.getAttribute("href") || "";
+        result.frameUrl = win.location.href;
+        return true;
+      };
+      const walk = (win) => {
+        try {
+          const url = win.location.href;
+          if (seen.indexOf(url) !== -1) return false;
+          seen.push(url);
+          const doc = win.document;
+          const nodes = Array.from(doc.querySelectorAll("a, button, td, li, span, div, font, u"));
+          for (const el of nodes) {
+            if (labelOf(el) === "我的课表" && tryClick(el, win)) return true;
+          }
+          for (const el of nodes) {
+            const text = labelOf(el);
+            if (text.length > 12) continue;
+            if ((text === "课表" || text.indexOf("我的课表") !== -1) && tryClick(el, win)) return true;
+          }
+          const links = Array.from(doc.querySelectorAll("a[href]"));
+          for (const a of links) {
+            const href = a.getAttribute("href") || "";
+            const text = labelOf(a);
+            if (forbidden.test(text)) continue;
+            const looks = href.indexOf("课表") !== -1 || /wdkb|xskb|kbcx|courseTable|timetable/i.test(href);
+            if (looks && (text.indexOf("课表") !== -1 || href.indexOf("课表") !== -1) && tryClick(a, win)) return true;
+          }
+          const kids = [];
+          try {
+            for (let i = 0; i < win.frames.length; i += 1) kids.push(win.frames[i]);
+          } catch (e) {}
+          try {
+            doc.querySelectorAll("iframe, frame").forEach((el) => {
+              try { if (el.contentWindow) kids.push(el.contentWindow); } catch (e2) {}
+            });
+          } catch (e) {}
+          for (const child of kids) {
+            try { if (walk(child)) return true; } catch (e) {}
           }
         } catch (e) {}
-        return piece;
+        return false;
       };
-      const root = walk(window);
-      return {
-        url: root.url || location.href,
-        title: document.title || "",
-        html: root.html,
-        innerText: root.innerText
-      };
+      walk(window);
+      return result;
     })();
     """
 }

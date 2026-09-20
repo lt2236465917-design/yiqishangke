@@ -84,7 +84,7 @@ enum TimetableHeuristics {
     }
 
     static func parseClockRange(_ text: String) -> (Int, Int)? {
-        let pattern = #"(\d{1,2})[:：](\d{2})\s*[-–—~至到]\s*(\d{1,2})[:：](\d{2})"#
+        let pattern = #"(\d{1,2})[:：](\d{2})\s*[-–—~至到]{1,2}\s*(\d{1,2})[:：](\d{2})"#
         guard let regex = try? NSRegularExpression(pattern: pattern),
               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
               let r1 = Range(match.range(at: 1), in: text),

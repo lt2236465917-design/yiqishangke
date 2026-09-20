@@ -54,17 +54,40 @@ enum ChinaWeekday: Int, Codable, CaseIterable, Identifiable, Sendable {
     static func parse(from text: String) -> ChinaWeekday? {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let map: [String: ChinaWeekday] = [
-            "1": .monday, "一": .monday, "周一": .monday, "星期一": .monday, "Monday": .monday, "Mon": .monday,
-            "2": .tuesday, "二": .tuesday, "周二": .tuesday, "星期二": .tuesday, "Tuesday": .tuesday, "Tue": .tuesday,
-            "3": .wednesday, "三": .wednesday, "周三": .wednesday, "星期三": .wednesday, "Wednesday": .wednesday, "Wed": .wednesday,
-            "4": .thursday, "四": .thursday, "周四": .thursday, "星期四": .thursday, "Thursday": .thursday, "Thu": .thursday,
-            "5": .friday, "五": .friday, "周五": .friday, "星期五": .friday, "Friday": .friday, "Fri": .friday,
-            "6": .saturday, "六": .saturday, "周六": .saturday, "星期六": .saturday, "Saturday": .saturday, "Sat": .saturday,
-            "7": .sunday, "日": .sunday, "天": .sunday, "周日": .sunday, "周天": .sunday,
+            "1": .monday, "一": .monday, "周1": .monday, "周一": .monday, "星期一": .monday, "Monday": .monday, "Mon": .monday,
+            "2": .tuesday, "二": .tuesday, "周2": .tuesday, "周二": .tuesday, "星期二": .tuesday, "Tuesday": .tuesday, "Tue": .tuesday,
+            "3": .wednesday, "三": .wednesday, "周3": .wednesday, "周三": .wednesday, "星期三": .wednesday, "Wednesday": .wednesday, "Wed": .wednesday,
+            "4": .thursday, "四": .thursday, "周4": .thursday, "周四": .thursday, "星期四": .thursday, "Thursday": .thursday, "Thu": .thursday,
+            "5": .friday, "五": .friday, "周5": .friday, "周五": .friday, "星期五": .friday, "Friday": .friday, "Fri": .friday,
+            "6": .saturday, "六": .saturday, "周6": .saturday, "周六": .saturday, "星期六": .saturday, "Saturday": .saturday, "Sat": .saturday,
+            "7": .sunday, "日": .sunday, "天": .sunday, "周7": .sunday, "周日": .sunday, "周天": .sunday,
             "星期日": .sunday, "星期天": .sunday, "Sunday": .sunday, "Sun": .sunday
         ]
         if let exact = map[t] { return exact }
         for (key, value) in map where key.count > 1 && t.contains(key) {
+            return value
+        }
+        return nil
+    }
+
+    /// Column header only — does not treat bare `1` / `一` as Monday.
+    static func parseColumnHeader(_ text: String) -> ChinaWeekday? {
+        let t = text
+            .replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return nil }
+        let map: [String: ChinaWeekday] = [
+            "周1": .monday, "周一": .monday, "星期一": .monday, "Monday": .monday, "Mon": .monday,
+            "周2": .tuesday, "周二": .tuesday, "星期二": .tuesday, "Tuesday": .tuesday, "Tue": .tuesday,
+            "周3": .wednesday, "周三": .wednesday, "星期三": .wednesday, "Wednesday": .wednesday, "Wed": .wednesday,
+            "周4": .thursday, "周四": .thursday, "星期四": .thursday, "Thursday": .thursday, "Thu": .thursday,
+            "周5": .friday, "周五": .friday, "星期五": .friday, "Friday": .friday, "Fri": .friday,
+            "周6": .saturday, "周六": .saturday, "星期六": .saturday, "Saturday": .saturday, "Sat": .saturday,
+            "周7": .sunday, "周日": .sunday, "周天": .sunday,
+            "星期日": .sunday, "星期天": .sunday, "Sunday": .sunday, "Sun": .sunday
+        ]
+        if let exact = map[t] { return exact }
+        for (key, value) in map where t == key || t.hasPrefix(key) {
             return value
         }
         return nil

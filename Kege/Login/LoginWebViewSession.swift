@@ -19,6 +19,8 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     @Published var currentURL: URL?
     @Published var didAttemptAutoFill = false
     @Published private(set) var isOnAppList = false
+    @Published private(set) var isOnGraduateFrameset = false
+    @Published private(set) var timetableHint = ""
 
     let webView: WKWebView
     /// Popup created by `window.open` / `target=_blank` when the request has no concrete URL yet.
@@ -26,6 +28,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     private let parser: SchoolParsing
     private var credentials: SchoolCredentials?
     private var didOpenGraduate = false
+    private var didClickMyTimetable = false
 
     static let desktopSafariUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
 
@@ -59,7 +62,10 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         self.credentials = credentials
         didAttemptAutoFill = false
         didOpenGraduate = false
+        didClickMyTimetable = false
         isOnAppList = false
+        isOnGraduateFrameset = false
+        timetableHint = ""
         phase = .loading(SchoolParser.loginURL)
         SafeLog.info("Starting school login WebView (ephemeral). Username \(Redaction.username(credentials.username))")
         dismissPopup()
@@ -68,7 +74,9 @@ final class LoginWebViewSession: NSObject, ObservableObject {
 
     func openGraduateManagement() {
         didOpenGraduate = true
+        didClickMyTimetable = false
         isOnAppList = false
+        timetableHint = "已打开研究生系统。请点左侧「我的课表」，再点「解析本页」。"
         dismissPopup()
         phase = .readyToParse
         SafeLog.info("Opening graduate frameset")
@@ -78,6 +86,10 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     private func remember(url: URL?) {
         currentURL = url
         isOnAppList = PortalNavigation.isAppList(url)
+        isOnGraduateFrameset = PortalNavigation.isGraduateFrameset(url)
+        if isOnGraduateFrameset && timetableHint.isEmpty {
+            timetableHint = "请点左侧「我的课表」（高亮项），再点「解析本页」。地址栏可能仍停在 frameset。"
+        }
     }
 
     private func syncURLFromPage(_ webView: WKWebView) async {
@@ -97,6 +109,32 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         await syncURLFromPage(webView)
         guard !didOpenGraduate, PortalNavigation.shouldOpenGraduate(from: currentURL ?? webView.url) else { return }
         openGraduateManagement()
+    }
+
+    private func openMyTimetableIfPossible(from webView: WKWebView) async {
+        await syncURLFromPage(webView)
+        guard PortalNavigation.isGraduateFrameset(currentURL ?? webView.url) else { return }
+        guard !didClickMyTimetable else { return }
+        didClickMyTimetable = true
+        for attempt in 0..<2 {
+            do {
+                let raw = try await webView.evaluateJavaScript(EmbeddedScripts.openMyTimetable)
+                let dict = Self.dictionary(from: raw)
+                if dict["clicked"] as? Bool == true {
+                    timetableHint = "已尝试打开「我的课表」。确认左侧高亮且出现课表后再点「解析本页」。"
+                    SafeLog.info("Clicked 我的课表 in graduate frameset")
+                    return
+                }
+            } catch {
+                timetableHint = "请点左侧「我的课表」，再点「解析本页」。"
+                SafeLog.error("我的课表 script error: \(error.localizedDescription)")
+            }
+            if attempt == 0 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+        timetableHint = "未能自动点开「我的课表」。请在左侧菜单亲手点一下，再点「解析本页」。"
+        SafeLog.info("我的课表 click not found")
     }
 
     func userTappedParseCurrentPage() async {
@@ -215,7 +253,7 @@ extension LoginWebViewSession: WKNavigationDelegate {
         remember(url: webView.url)
         if case .needsManualAuth = phase { return }
         if case .parsed = phase { return }
-        if PortalNavigation.isGraduateFrameset(webView.url) {
+        if PortalNavigation.isGraduateFrameset(webView.url) || PortalNavigation.isGraduateHost(webView.url) {
             phase = .readyToParse
             return
         }
@@ -230,7 +268,9 @@ extension LoginWebViewSession: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         remember(url: webView.url)
-        if PortalNavigation.isGraduateFrameset(webView.url) || PortalNavigation.isSchoolPortal(webView.url) {
+        if PortalNavigation.isGraduateFrameset(webView.url)
+            || PortalNavigation.isGraduateHost(webView.url)
+            || PortalNavigation.isSchoolPortal(webView.url) {
             if case .parsed = phase { } else {
                 phase = .readyToParse
             }
@@ -242,6 +282,7 @@ extension LoginWebViewSession: WKNavigationDelegate {
                 await attemptAutoFillIfNeeded()
             }
             await openGraduateIfReady(from: webView)
+            await openMyTimetableIfPossible(from: webView)
         }
     }
 
@@ -327,9 +368,13 @@ enum PortalNavigation {
         ZgysyjyParser.isGraduateFrameset(url)
     }
 
+    static func isGraduateHost(_ url: URL?) -> Bool {
+        ZgysyjyParser.isGraduateHost(url)
+    }
+
     static func isAppList(_ url: URL?) -> Bool {
         guard let url else { return false }
-        if isLoginPage(url) || isGraduateFrameset(url) { return false }
+        if isLoginPage(url) || isGraduateFrameset(url) || isGraduateHost(url) { return false }
         let blob = (url.absoluteString + " " + url.path + " " + (url.fragment ?? "")).lowercased()
         return blob.contains("applist") || blob.contains("app-list") || blob.contains("/portal")
     }
@@ -337,7 +382,7 @@ enum PortalNavigation {
     static func isSchoolPortal(_ url: URL?) -> Bool {
         guard let url, let host = url.host?.lowercased() else { return false }
         guard isAllowedHost(host) else { return false }
-        if isLoginPage(url) || isGraduateFrameset(url) { return false }
+        if isLoginPage(url) || isGraduateFrameset(url) || isGraduateHost(url) { return false }
         return isAppList(url)
     }
 
