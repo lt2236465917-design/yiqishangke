@@ -102,6 +102,7 @@ struct SchoolLoginView: View {
     }
 
     private var bannerColor: Color {
+        if session.isOnAppList { return KegeTheme.accent }
         switch session.phase {
         case .failed: KegeTheme.accent
         case .needsManualAuth: .orange
