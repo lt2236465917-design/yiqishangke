@@ -1,0 +1,154 @@
+{
+  "scheduled": [
+    {
+      "title": "暗房工艺基础实训",
+      "teacher": "",
+      "sourceLine": "5周日-上午课-虚拟教室1(主校区)",
+      "credit": "1.0"
+    },
+    {
+      "title": "暗房工艺基础实训",
+      "teacher": "",
+      "sourceLine": "5周六-上午课-虚拟教室1(主校区)",
+      "credit": "1.0"
+    },
+    {
+      "title": "暗房工艺基础实训",
+      "teacher": "",
+      "sourceLine": "5周日-下午课-虚拟教室1(主校区)",
+      "credit": "1.0"
+    },
+    {
+      "title": "暗房工艺基础实训",
+      "teacher": "",
+      "sourceLine": "5周六-下午课-虚拟教室1(主校区)",
+      "credit": "1.0"
+    },
+    {
+      "title": "东亚艺术通史",
+      "teacher": "",
+      "sourceLine": "6-11周一-下午课-6406(主校区)",
+      "credit": "2.0"
+    },
+    {
+      "title": "东亚艺术通史",
+      "teacher": "",
+      "sourceLine": "3,4周一-下午课-6406(主校区)",
+      "credit": "2.0"
+    },
+    {
+      "title": "艺术美学概论",
+      "teacher": "",
+      "sourceLine": "6-11周二-下午课-6406(主校区)",
+      "credit": "2.0"
+    },
+    {
+      "title": "艺术美学概论",
+      "teacher": "",
+      "sourceLine": "3,4周二-下午课-6406(主校区)",
+      "credit": "2.0"
+    },
+    {
+      "title": "视觉文化专题",
+      "teacher": "",
+      "sourceLine": "5-8周五-下午课-6408(主校区)",
+      "credit": "1.0"
+    },
+    {
+      "title": "人类学理论专题",
+      "teacher": "",
+      "sourceLine": "6,7周三-下午课-6408(主校区)",
+      "credit": "1.0"
+    },
+    {
+      "title": "人类学理论专题",
+      "teacher": "",
+      "sourceLine": "3,4周三-下午课-6408(主校区)",
+      "credit": "1.0"
+    },
+    {
+      "title": "遗产政策法规专题",
+      "teacher": "",
+      "sourceLine": "6-13周三-上午课-6607(主校区)",
+      "credit": "2.0"
+    },
+    {
+      "title": "硕士英语（学术型）",
+      "teacher": "",
+      "sourceLine": "12周二-上午课-6310(主校区)",
+      "credit": "2.0"
+    },
+    {
+      "title": "硕士英语（学术型）",
+      "teacher": "",
+      "sourceLine": "6-10周二-上午课-6310(主校区)",
+      "credit": "2.0"
+    },
+    {
+      "title": "硕士英语（学术型）",
+      "teacher": "",
+      "sourceLine": "3,4周二-上午课-第五会议室(主校区)",
+      "credit": "2.0"
+    },
+    {
+      "title": "跨学科理论前沿",
+      "teacher": "",
+      "sourceLine": "14-17周五-下午课-虚拟教室3(主校区)",
+      "credit": "1.0"
+    },
+    {
+      "title": "遗产概论",
+      "teacher": "",
+      "sourceLine": "6-13周一-上午课-6607(主校区)",
+      "credit": "2.0"
+    },
+    {
+      "title": "遗产保护实践专题",
+      "teacher": "",
+      "sourceLine": "9-12周三-下午课-6408(主校区)",
+      "credit": "1.0"
+    },
+    {
+      "title": "中国特色社会主义理论与实践研究",
+      "teacher": "",
+      "sourceLine": "3-11周四-上午课-三楼学术报告厅(主校区)",
+      "credit": "2.0"
+    },
+    {
+      "title": "说唱艺术导论",
+      "teacher": "",
+      "sourceLine": "6周一-晚上课-自排教室-6401教室",
+      "credit": "1.0"
+    },
+    {
+      "title": "说唱艺术导论",
+      "teacher": "",
+      "sourceLine": "4周三-晚上课-自排教室-6401教室",
+      "credit": "1.0"
+    },
+    {
+      "title": "说唱艺术导论",
+      "teacher": "",
+      "sourceLine": "4周二-晚上课-自排教室-6401教室",
+      "credit": "1.0"
+    },
+    {
+      "title": "说唱艺术导论",
+      "teacher": "",
+      "sourceLine": "4周一-晚上课-自排教室-6401教室",
+      "credit": "1.0"
+    }
+  ],
+  "pending": [
+    {
+      "title": "思政大讲堂：形势与政策",
+      "teacher": "",
+      "reason": "思政占位行，联系教师自行安排"
+    },
+    {
+      "title": "导师课",
+      "teacher": "",
+      "reason": "时间、地点待定"
+    }
+  ]
+}

@@ -92,8 +92,9 @@ Key / 根路径 / 模型 / 补全路径都可改。下次请求只读本机钥�
 
 这些是已接受的债，不是本机 sideload 的 blocker，也**不要**当成商店验收通过：
 
-- 研究生课表在 **frameset 子 frame** 里。抽表依赖 WK 用户脚本 / `postMessage`；仓库内 **没有** 真实课表 HTML 夹具或 XCTest，frameset 是否稳定 **未 golden 测试**。
-- 相册 OCR 目标约 23 条有效时段，**未**用真实学生课名/截图在 git 内复核；可能少抽或多抽。
+- 研究生课表在 **frameset 子 frame** 里。抽表依赖 WK 用户脚本 / `postMessage`。仓库现有 **合成 HTML/JSON golden**（见下方回归），不是真机 frameset 稳定性测试。
+- 相册 OCR 有 **合成 JSON 样本** 覆盖 `mergeAndDedupe` / TBD；**没有**真实学生课名或截图，也 **不**在 CI 调 DeepSeek。可能少抽或多抽。
+- **本机设备验收已关闭**（用户 2026-09-20）。下列回归只是仓库防回退，**不是** App Store / 真机验收。
 - Cloud / Linux **不能**编 Xcode；校外访问 IAM 常 **TCP 超时**。能否编过、门户能否打开，只能在你的 Mac + 校园网或 VPN 上确认。
 - 「我的课表」子菜单准确 URL **未知**；地址栏可能一直停在 `frameset.jsp`。
 - 登录页横幅戳 `eedf46d` 对应 RF-109 源码修复；本仓库没有 CI 编译任务。
@@ -119,3 +120,23 @@ Key / 根路径 / 模型 / 补全路径都可改。下次请求只读本机钥�
 | `ScreenshotImporter` | 相册多图；有 Key 走 DeepSeek JSON，否则 Vision |
 | `ReminderScheduler` | 按开启档位排程 |
 | `ScheduleWidgets` | Small / Medium 主屏幕组件 |
+
+## 解析器回归（仓库证据，离线）
+
+**本机设备验收已关闭。** 这些测试只防 `ZgysyjyParser` / `WeeklyGridOCRParser.mergeAndDedupe` 回退，不是 App Store、也不是真机门户验收。夹具用合成课名，不要提交真实学生课表。
+
+无网络：
+
+```bash
+# Linux / 任意有 Python 3 的机器（本仓库 Cloud 环境用这条）
+python3 ParserRegression/run_offline.py
+
+# Mac：编进真实 Swift 解析器
+swift test
+```
+
+夹具在 `ParserRegression/Fixtures/`：`golden-my-schedule.html`（名单表 + 周网格 上午/下午/晚上 + 空的第 N 节）、`extract-schedule-tables.json`（对齐 WK `extractScheduleTables`）、`ocr-model-sample.json`、`ocr-merge-input.json`。改结构后可 `python3 ParserRegression/generate_fixtures.py` 再跑上面两条。
+
+断言：约 **23** 条已排课（上午 09:00 / 下午 13:30 / 晚上 19:00 都有，**不是**全部 09:00–12:00），空导师课和思政 `label.teachtask` 占位为 **时间待定**。
+
+可选：本机再跑一次真实 DeepSeek 识图（**不进 CI、不提交 Key**）：复制 `Config/Secrets.example.plist` → `Config/Secrets.local.plist`（已 gitignore），填 `AI_API_KEY`，用 App「导入」对照合成截图。不要把 Key、学校密码或真实课表 HTML 推进 git。

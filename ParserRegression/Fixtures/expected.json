@@ -1,0 +1,22 @@
+{
+  "scheduledCount": 23,
+  "pendingCount": 2,
+  "pendingTitles": [
+    "思政大讲堂：形势与政策",
+    "导师课"
+  ],
+  "requireDistinctBands": true,
+  "morningMinutes": [
+    540,
+    720
+  ],
+  "afternoonMinutes": [
+    810,
+    990
+  ],
+  "eveningMinutes": [
+    1140,
+    1290
+  ],
+  "notes": "Synthetic names. List table is source of truth; week grid has empty 第N节 rows."
+}

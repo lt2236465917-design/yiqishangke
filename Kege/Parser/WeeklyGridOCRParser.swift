@@ -1,14 +1,34 @@
 import Foundation
-import CoreGraphics
+
+/// Normalized box, origin top-left, unit square. Portable (no CoreGraphics).
+struct OCRBox: Sendable, Equatable {
+    var x: Double
+    var y: Double
+    var width: Double
+    var height: Double
+
+    var midX: Double { x + width / 2 }
+    var midY: Double { y + height / 2 }
+    var minX: Double { x }
+    var maxX: Double { x + width }
+    var minY: Double { y }
+    var maxY: Double { y + height }
+
+    init(x: Double, y: Double, width: Double, height: Double) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+    }
+}
 
 struct OCRToken: Sendable, Equatable {
     var text: String
-    /// Normalized box, origin top-left, unit square.
-    var box: CGRect
+    var box: OCRBox
     var confidence: Float
 
-    var midX: CGFloat { box.midX }
-    var midY: CGFloat { box.midY }
+    var midX: Double { box.midX }
+    var midY: Double { box.midY }
 }
 
 /// Rebuild the graduate weekly grid from Vision boxes (not line-joined OCR).
@@ -62,9 +82,14 @@ enum WeeklyGridOCRParser {
         var seen = Set<String>()
         return drafts.filter { draft in
             let title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            let weeks = (draft.weeks ?? []).map(String.init).joined(separator: ",")
-            let room = draft.location.trimmingCharacters(in: .whitespacesAndNewlines)
-            let key = "\(title)|\(draft.weekday.rawValue)|\(draft.startMinutes)|\(draft.endMinutes)|\(room)|\(weeks)"
+            let key: String
+            if draft.timePending {
+                key = "pending|\(title)"
+            } else {
+                let weeks = (draft.weeks ?? []).map(String.init).joined(separator: ",")
+                let room = draft.location.trimmingCharacters(in: .whitespacesAndNewlines)
+                key = "\(title)|\(draft.weekday.rawValue)|\(draft.startMinutes)|\(draft.endMinutes)|\(room)|\(weeks)"
+            }
             return seen.insert(key).inserted
         }
     }
@@ -105,20 +130,20 @@ enum WeeklyGridOCRParser {
 
     private struct DayColumn {
         var weekday: ChinaWeekday
-        var minX: CGFloat
-        var maxX: CGFloat
-        var range: ClosedRange<CGFloat> { minX...maxX }
+        var minX: Double
+        var maxX: Double
+        var range: ClosedRange<Double> { minX...maxX }
     }
 
     private struct PeriodRow {
         var kind: ZgysyjyMeeting.PeriodKind
         var start: Int
         var end: Int
-        var range: ClosedRange<CGFloat>
+        var range: ClosedRange<Double>
     }
 
     private static func detectDayColumns(in tokens: [OCRToken]) -> [DayColumn] {
-        var headers: [(ChinaWeekday, CGFloat)] = []
+        var headers: [(ChinaWeekday, Double)] = []
         for token in tokens {
             let compact = token.text.replacingOccurrences(of: " ", with: "")
             guard compact.count <= 8, let day = ChinaWeekday.parseColumnHeader(compact) else { continue }
@@ -126,9 +151,9 @@ enum WeeklyGridOCRParser {
         }
         if Set(headers.map(\.0)).count >= 3 {
             let grouped = Dictionary(grouping: headers, by: \.0)
-                .compactMap { weekday, items -> (ChinaWeekday, CGFloat)? in
+                .compactMap { weekday, items -> (ChinaWeekday, Double)? in
                     let xs = items.map(\.1)
-                    return (weekday, xs.reduce(0, +) / CGFloat(xs.count))
+                    return (weekday, xs.reduce(0, +) / Double(xs.count))
                 }
                 .sorted { $0.1 < $1.1 }
             return columns(fromCenters: grouped)
@@ -141,7 +166,7 @@ enum WeeklyGridOCRParser {
         return columns(fromCenters: Array(zip(days, dayCenters)))
     }
 
-    private static func columns(fromCenters pairs: [(ChinaWeekday, CGFloat)]) -> [DayColumn] {
+    private static func columns(fromCenters pairs: [(ChinaWeekday, Double)]) -> [DayColumn] {
         guard !pairs.isEmpty else { return [] }
         var result: [DayColumn] = []
         for (index, pair) in pairs.enumerated() {
@@ -155,12 +180,12 @@ enum WeeklyGridOCRParser {
     private static func detectPeriodRows(leftColumn: [OCRToken], fallback: [OCRToken]) -> [PeriodRow] {
         let source = leftColumn.isEmpty ? fallback : leftColumn
         let groups = clusterTokens(source, alongY: true, gap: 0.032)
-        var raw: [(kind: ZgysyjyMeeting.PeriodKind, start: Int, end: Int, y: CGFloat)] = []
+        var raw: [(kind: ZgysyjyMeeting.PeriodKind, start: Int, end: Int, y: Double)] = []
         for group in groups {
             let blob = group.map(\.text).joined(separator: "\n")
             guard let kind = ZgysyjyMeeting.periodKind(from: blob) else { continue }
             let clock = ZgysyjyMeeting.parseClockRange(blob) ?? kind.minutes
-            let y = group.map(\.midY).reduce(0, +) / CGFloat(group.count)
+            let y = group.map(\.midY).reduce(0, +) / Double(group.count)
             raw.append((kind, clock.0, clock.1, y))
         }
         raw.sort { $0.y < $1.y }
@@ -175,13 +200,13 @@ enum WeeklyGridOCRParser {
         return rows
     }
 
-    private static func clusterTokens(_ tokens: [OCRToken], alongY: Bool, gap: CGFloat) -> [[OCRToken]] {
+    private static func clusterTokens(_ tokens: [OCRToken], alongY: Bool, gap: Double) -> [[OCRToken]] {
         let sorted = tokens.sorted { alongY ? $0.midY < $1.midY : $0.midX < $1.midX }
         var groups: [[OCRToken]] = []
         for token in sorted {
             let value = alongY ? token.midY : token.midX
             if var last = groups.last {
-                let lastValue = last.map { alongY ? $0.midY : $0.midX }.reduce(0, +) / CGFloat(last.count)
+                let lastValue = last.map { alongY ? $0.midY : $0.midX }.reduce(0, +) / Double(last.count)
                 if abs(value - lastValue) < gap {
                     last.append(token)
                     groups[groups.count - 1] = last
@@ -193,17 +218,17 @@ enum WeeklyGridOCRParser {
         return groups
     }
 
-    private static func clusterAxis(_ values: [CGFloat], gap: CGFloat) -> [CGFloat] {
+    private static func clusterAxis(_ values: [Double], gap: Double) -> [Double] {
         let sorted = values.sorted()
-        var groups: [[CGFloat]] = []
+        var groups: [[Double]] = []
         for value in sorted {
-            if var last = groups.last, let mean = last.first, abs(value - (last.reduce(0, +) / CGFloat(last.count))) < gap || abs(value - mean) < gap {
+            if var last = groups.last, let mean = last.first, abs(value - (last.reduce(0, +) / Double(last.count))) < gap || abs(value - mean) < gap {
                 last.append(value)
                 groups[groups.count - 1] = last
             } else {
                 groups.append([value])
             }
         }
-        return groups.map { $0.reduce(0, +) / CGFloat($0.count) }
+        return groups.map { $0.reduce(0, +) / Double($0.count) }
     }
 }

@@ -103,7 +103,10 @@ struct ZgysyjyParser: SchoolParsing {
     }
 
     private func looksLikeListTable(_ text: String) -> Bool {
-        text.contains("课程编号") && text.contains("课程名称") && text.contains("上课时间")
+        let hasCode = text.contains("课程编号") || text.contains("课程编码")
+        let hasTitle = text.contains("课程名称")
+        let hasMeeting = text.contains("上课时间") || text.contains("上课周次")
+        return hasCode && hasTitle && hasMeeting
     }
 
     private func looksLikeWeeklyGrid(_ text: String) -> Bool {
@@ -146,7 +149,7 @@ struct ZgysyjyParser: SchoolParsing {
         if blob.contains("周一") && (blob.contains("周二") || blob.contains("周日") || blob.contains("周三")) { n += 8 }
         if blob.contains("上午课") || blob.contains("下午课") || blob.contains("晚上课") { n += 6 }
         if blob.contains("第一节") || blob.contains("第1节") { n += 4 }
-        if blob.contains("课程编号") && blob.contains("课程名称") { n += 2 }
+        if (blob.contains("课程编号") || blob.contains("课程编码")) && blob.contains("课程名称") { n += 2 }
         return n
     }
 
@@ -161,7 +164,13 @@ struct ZgysyjyParser: SchoolParsing {
                 }
                 continue
             }
-            if let index = result.firstIndex(where: { $0.title == extra.title && $0.weekday == extra.weekday && !$0.timePending }) {
+            if let index = result.firstIndex(where: { draft in
+                draft.title == extra.title
+                    && draft.weekday == extra.weekday
+                    && !draft.timePending
+                    && draft.startMinutes == extra.startMinutes
+                    && (draft.weeks == extra.weeks || draft.weeks == nil || extra.weeks == nil)
+            }) {
                 if result[index].location.isEmpty { result[index].location = extra.location }
                 if result[index].teacher.isEmpty { result[index].teacher = extra.teacher }
                 if result[index].weeks == nil { result[index].weeks = extra.weeks }
@@ -221,7 +230,10 @@ struct ZgysyjyParser: SchoolParsing {
 
     private func isListHeader(_ row: [String]) -> Bool {
         let joined = row.joined()
-        return joined.contains("课程编号") && joined.contains("课程名称") && joined.contains("上课时间")
+        let hasCode = joined.contains("课程编号") || joined.contains("课程编码")
+        let hasTitle = joined.contains("课程名称")
+        let hasMeeting = joined.contains("上课时间") || joined.contains("上课周次")
+        return hasCode && hasTitle && hasMeeting
     }
 
     private func isUnselected(_ value: String?) -> Bool {
@@ -234,11 +246,11 @@ struct ZgysyjyParser: SchoolParsing {
         var map: [String: Int] = [:]
         for (i, raw) in header.enumerated() {
             let h = raw.replacingOccurrences(of: " ", with: "")
-            if h.contains("课程编号") { map["code"] = i }
+            if h.contains("课程编号") || h.contains("课程编码") { map["code"] = i }
             else if h.contains("课程名称") { map["title"] = i }
             else if h.contains("班次") { map["class"] = i }
             else if h.contains("学分") { map["credit"] = i }
-            else if h.contains("上课时间") { map["meeting"] = i }
+            else if h.contains("上课时间") || h.contains("上课周次") { map["meeting"] = i }
             else if h.contains("选课性质") { map["nature"] = i }
             else if h.contains("是否选中") { map["selected"] = i }
         }
