@@ -283,4 +283,72 @@ enum EmbeddedScripts {
       return result;
     })();
     """
+
+    /// Trigger the portal app tile so IAM can run SSO. Never clicks 登录. Never opens naked frameset.
+    static let openGraduateTile = """
+    (function() {
+      const forbidden = /登录|立即登录|退出|注销/;
+      const result = { clicked: false, text: "", href: "", method: "" };
+      const labelOf = (el) => ((el.innerText || el.textContent || "") + "").replace(/\\s+/g, "");
+      const attrURL = (el) => el.href || el.getAttribute("href") || el.getAttribute("data-url") || el.getAttribute("data-href") || el.getAttribute("data-link") || "";
+      const looksSSO = (u) => {
+        if (!u || u.indexOf("javascript:") === 0) return false;
+        const s = String(u).toLowerCase();
+        if (s.indexOf("frameset.jsp") !== -1 && s.indexOf("?") === -1) return false;
+        return s.indexOf("oauth") !== -1 || s.indexOf("authorize") !== -1 || s.indexOf("/cas") !== -1 || s.indexOf("sso") !== -1 || s.indexOf("ticket=") !== -1 || s.indexOf("saml") !== -1 || (s.indexOf("wxt.zgysyjy.org.cn") !== -1 && s.indexOf("?") !== -1);
+      };
+      const origOpen = window.open;
+      window.open = function(url) {
+        if (url) result.href = String(url);
+        result.method = "window.open";
+        try { return origOpen.apply(window, arguments); } catch (e) { return null; }
+      };
+      const fire = (el) => {
+        try {
+          el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+          el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+          el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+          el.click();
+          return true;
+        } catch (e) { return false; }
+      };
+      const nodes = Array.from(document.querySelectorAll("a, button, li, div, span, section, p, h1, h2, h3, h4, [role='button'], [class*='app'], [class*='tile']"));
+      const tiles = nodes.filter((el) => {
+        const text = labelOf(el);
+        if (!text || text.length > 36 || forbidden.test(text)) return false;
+        return text.indexOf("研究生综合管理") !== -1;
+      }).sort((a, b) => labelOf(a).length - labelOf(b).length);
+      for (const el of tiles) {
+        const href = attrURL(el);
+        if (looksSSO(href)) result.href = href;
+        if (fire(el)) {
+          result.clicked = true;
+          result.text = labelOf(el);
+          result.method = result.method || "click";
+          break;
+        }
+      }
+      if (!result.href) {
+        const html = document.documentElement ? document.documentElement.innerHTML : "";
+        const idx = html.indexOf("研究生综合管理");
+        const slice = idx === -1 ? html : html.slice(Math.max(0, idx - 500), idx + 900);
+        const found = slice.match(/https?:\\/\\/[^\\s"'<>]+/g) || [];
+        for (const u of found) {
+          if (looksSSO(u)) { result.href = u; result.method = result.method || "scan"; break; }
+        }
+      }
+      window.open = origOpen;
+      return result;
+    })();
+    """
+
+    static let detectGraduateLoginWall = """
+    (function() {
+      const t = ((document.body && document.body.innerText) || "") + (document.title || "");
+      return {
+        loginWall: t.indexOf("请登录") !== -1 || t.indexOf("数据处理出现错误") !== -1,
+        excerpt: t.replace(/\\s+/g, " ").slice(0, 80)
+      };
+    })();
+    """
 }

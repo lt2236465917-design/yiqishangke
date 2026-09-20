@@ -27,8 +27,9 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     @Published var popupWebView: WKWebView?
     private let parser: SchoolParsing
     private var credentials: SchoolCredentials?
-    private var didOpenGraduate = false
     private var didClickMyTimetable = false
+    /// Set only when the user taps 「进入研究生系统」 while not yet on appList.
+    private var pendingGraduateTileClick = false
 
     static let desktopSafariUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
 
@@ -61,8 +62,8 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     func start(credentials: SchoolCredentials) {
         self.credentials = credentials
         didAttemptAutoFill = false
-        didOpenGraduate = false
         didClickMyTimetable = false
+        pendingGraduateTileClick = false
         isOnAppList = false
         isOnGraduateFrameset = false
         timetableHint = ""
@@ -73,22 +74,33 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     }
 
     func openGraduateManagement() {
-        didOpenGraduate = true
-        didClickMyTimetable = false
-        isOnAppList = false
-        timetableHint = "已打开研究生系统。请点左侧「我的课表」，再点「解析本页」。"
-        dismissPopup()
-        phase = .readyToParse
-        SafeLog.info("Opening graduate frameset")
-        webView.load(URLRequest(url: SchoolParser.graduateFramesetURL))
+        Task { await openGraduateViaPortalSSO() }
     }
+
+    /// Never loads naked frameset. Stays on / returns to appList, then clicks the portal tile for SSO.
+    private func openGraduateViaPortalSSO() async {
+        didClickMyTimetable = false
+        await syncURLFromPage(activeWebView)
+        let url = currentURL ?? activeWebView.url
+        if PortalNavigation.isAppList(url) {
+            await clickGraduateTile(from: activeWebView)
+            return
+        }
+        pendingGraduateTileClick = true
+        timetableHint = Self.appListSSOHint
+        phase = .readyToParse
+        SafeLog.info("Not on appList; loading portal appList for SSO tile click (not frameset)")
+        webView.load(URLRequest(url: SchoolParser.portalAppListURL))
+    }
+
+    private static let appListSSOHint = "请点应用列表里的研究生综合管理；直达裸开会丢登录态"
 
     private func remember(url: URL?) {
         currentURL = url
         isOnAppList = PortalNavigation.isAppList(url)
         isOnGraduateFrameset = PortalNavigation.isGraduateFrameset(url)
-        if isOnGraduateFrameset && timetableHint.isEmpty {
-            timetableHint = "请点左侧「我的课表」（高亮项），再点「解析本页」。地址栏可能仍停在 frameset。"
+        if isOnAppList {
+            timetableHint = Self.appListSSOHint
         }
     }
 
@@ -101,14 +113,64 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         remember(url: webView.url)
     }
 
-    private func openGraduateIfReady(from webView: WKWebView) async {
+    private func clickGraduateTile(from webView: WKWebView) async {
+        pendingGraduateTileClick = false
+        timetableHint = "正在点应用列表里的「研究生综合管理」，以保留门户登录态…"
+        for attempt in 0..<3 {
+            do {
+                let raw = try await webView.evaluateJavaScript(EmbeddedScripts.openGraduateTile)
+                let dict = Self.dictionary(from: raw)
+                let clicked = dict["clicked"] as? Bool ?? false
+                let href = dict["href"] as? String ?? ""
+                if let url = PortalNavigation.resolvedSSOURL(href, relativeTo: currentURL ?? webView.url) {
+                    SafeLog.info("Loading discovered SSO host=\(url.host ?? "")")
+                    webView.load(URLRequest(url: url))
+                    timetableHint = "已通过门户单点登录跳转。进入课表后点「解析本页」。"
+                    return
+                }
+                if clicked {
+                    timetableHint = "已尝试点开「研究生综合管理」。等跳转完成后打开「我的课表」，再点「解析本页」。"
+                    SafeLog.info("Clicked graduate tile method=\(dict["method"] as? String ?? "")")
+                    return
+                }
+            } catch {
+                SafeLog.error("Graduate tile script: \(error.localizedDescription)")
+            }
+            if attempt < 2 {
+                try? await Task.sleep(nanoseconds: 400_000_000)
+            }
+        }
+        timetableHint = Self.appListSSOHint + "。磁贴脚本未点到，请亲手点；仍失败请改用截图导入。"
+        SafeLog.info("Graduate tile click not found")
+    }
+
+    private func finishPendingTileClickIfNeeded(from webView: WKWebView) async {
+        guard pendingGraduateTileClick else { return }
         await syncURLFromPage(webView)
-        guard !didOpenGraduate else { return }
-        guard PortalNavigation.shouldOpenGraduate(from: currentURL ?? webView.url) else { return }
-        try? await Task.sleep(nanoseconds: 400_000_000)
-        await syncURLFromPage(webView)
-        guard !didOpenGraduate, PortalNavigation.shouldOpenGraduate(from: currentURL ?? webView.url) else { return }
-        openGraduateManagement()
+        guard PortalNavigation.isAppList(currentURL ?? webView.url) else { return }
+        await clickGraduateTile(from: webView)
+    }
+
+    private func detectGraduateLoginWall(from webView: WKWebView) async {
+        guard PortalNavigation.isGraduateHost(currentURL ?? webView.url) else { return }
+        do {
+            let raw = try await webView.evaluateJavaScript(EmbeddedScripts.detectGraduateLoginWall)
+            let dict = Self.dictionary(from: raw)
+            if dict["loginWall"] as? Bool == true {
+                timetableHint = Self.appListSSOHint + "。当前页在要登录，说明没带上门户会话。"
+                SafeLog.info("Graduate page login wall")
+            }
+        } catch {
+            SafeLog.error("Login-wall script: \(error.localizedDescription)")
+        }
+        logCookieDomains(from: webView)
+    }
+
+    private func logCookieDomains(from webView: WKWebView) {
+        webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
+            let domains = Array(Set(cookies.map(\.domain))).sorted()
+            SafeLog.info("Cookie domains: \(domains.joined(separator: ", ")) count=\(cookies.count)")
+        }
     }
 
     private func openMyTimetableIfPossible(from webView: WKWebView) async {
@@ -281,8 +343,9 @@ extension LoginWebViewSession: WKNavigationDelegate {
                 try? await Task.sleep(nanoseconds: 450_000_000)
                 await attemptAutoFillIfNeeded()
             }
-            await openGraduateIfReady(from: webView)
+            await finishPendingTileClickIfNeeded(from: webView)
             await openMyTimetableIfPossible(from: webView)
+            await detectGraduateLoginWall(from: webView)
         }
     }
 
@@ -316,6 +379,7 @@ extension LoginWebViewSession: WKUIDelegate {
             return nil
         }
 
+        configuration.websiteDataStore = webView.configuration.websiteDataStore
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
         let child = WKWebView(frame: webView.bounds, configuration: configuration)
@@ -386,8 +450,32 @@ enum PortalNavigation {
         return isAppList(url)
     }
 
-    static func shouldOpenGraduate(from url: URL?) -> Bool {
-        isAppList(url) || isSchoolPortal(url)
+    /// Ticketed / oauth hops are OK. Bare frameset.jsp without query is not an SSO entry.
+    static func looksLikeSSOEntry(_ url: URL) -> Bool {
+        if isBareGraduateFrameset(url) { return false }
+        let blob = url.absoluteString.lowercased()
+        let query = url.query?.lowercased() ?? ""
+        return blob.contains("oauth")
+            || blob.contains("authorize")
+            || blob.contains("/cas")
+            || blob.contains("sso")
+            || blob.contains("saml")
+            || query.contains("ticket=")
+            || query.contains("token=")
+            || query.contains("code=")
+    }
+
+    static func isBareGraduateFrameset(_ url: URL?) -> Bool {
+        guard isGraduateFrameset(url) else { return false }
+        return (url?.query ?? "").isEmpty
+    }
+
+    static func resolvedSSOURL(_ raw: String, relativeTo base: URL?) -> URL? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let url = URL(string: trimmed) ?? URL(string: trimmed, relativeTo: base)?.absoluteURL
+        guard let url, hasConcreteHTTPURL(url), looksLikeSSOEntry(url) else { return nil }
+        return url
     }
 
     static func allows(_ url: URL, from current: URL?) -> Bool {

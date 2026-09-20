@@ -44,7 +44,11 @@ struct ZgysyjyParser: SchoolParsing {
         let looksLikeTimetable = pageLooksLikeTimetable(html: html, url: pageURL, text: innerText)
         var blocker: String?
         if drafts.isEmpty {
-            if looksLikeTimetable {
+            if (innerText ?? html).contains("请登录") || (innerText ?? html).contains("数据处理出现错误") {
+                blocker = """
+                研究生系统在要登录，说明没带上门户会话。请回到应用列表点「研究生综合管理」；直达裸开会丢登录态。仍失败请改用截图导入。
+                """
+            } else if looksLikeTimetable {
                 blocker = SchoolParserError.noTableFound.localizedDescription
             } else if Self.isGraduateFrameset(pageURL) {
                 blocker = """

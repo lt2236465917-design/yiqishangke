@@ -90,13 +90,13 @@ struct SchoolLoginView: View {
             reason
         case .readyToParse:
             if session.isOnAppList {
-                "应用列表里的磁贴在 WebView 里点不了。请用「进入研究生系统」，不要点那个磁贴。"
-            } else if session.isOnGraduateFrameset || !session.timetableHint.isEmpty {
-                session.timetableHint.isEmpty
-                    ? "研究生系统是框架页。请点左侧「我的课表」后再点「解析本页」。解析会读取同域 frame。"
-                    : session.timetableHint
+                "请点应用列表里的研究生综合管理；直达裸开会丢登录态"
+            } else if !session.timetableHint.isEmpty {
+                session.timetableHint
+            } else if session.isOnGraduateFrameset {
+                "研究生系统是框架页。请点左侧「我的课表」后再点「解析本页」。"
             } else {
-                "进入课表页后再点「解析本页」。课表子菜单准确地址尚未核实。"
+                "进入课表页后再点「解析本页」。"
             }
         case .parsing:
             "使用 zgysyjy 解析脚本，不是 AI 点选。"
@@ -120,9 +120,9 @@ struct SchoolLoginView: View {
 
     private var appListOffer: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("不要点页面里的「研究生综合管理」磁贴")
+            Text("请点应用列表里的研究生综合管理；直达裸开会丢登录态")
                 .font(.subheadline.weight(.semibold))
-            Text("那个磁贴在本应用 WebView 里无效。请用下面的按钮打开已核实地址。")
+            Text("下面按钮会在本页点那个磁贴，走门户单点登录。不要自己打开 frameset.jsp。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Button {
