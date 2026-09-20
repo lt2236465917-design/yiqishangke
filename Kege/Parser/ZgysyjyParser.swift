@@ -2,7 +2,7 @@ import Foundation
 
 /// School-specific parser for 中国艺术研究院 (zgysyjy). Post-login timetable URL is UNVERIFIED.
 struct ZgysyjyParser: SchoolParsing {
-    static let loginURL = URL(string: "https://iam.zgysyjy.org.cn")!
+    static let loginURL = URL(string: "https://iam.zgysyjy.org.cn/am/mLogin/login.html")!
 
     /// Candidate paths after IAM — hypotheses only, not confirmed against a live session.
     static let candidateTimetableHints: [String] = [

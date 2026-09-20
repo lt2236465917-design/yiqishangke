@@ -62,6 +62,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
 
     private func attemptAutoFillIfNeeded() async {
         guard let credentials, credentials.isComplete else { return }
+        if didAttemptAutoFill { return }
         if case .needsManualAuth = phase { return }
         if case .parsed = phase { return }
         if case .parsing = phase { return }
@@ -77,18 +78,20 @@ final class LoginWebViewSession: NSObject, ObservableObject {
                 in: .page
             )
             // Password is passed only as a JS argument — never interpolated into logs.
-            let filled = (raw as? [String: Any])?["filled"] as? Bool ?? false
-            let halted = (raw as? [String: Any])?["halted"] as? Bool ?? false
-            let reason = (raw as? [String: Any])?["reason"] as? String ?? ""
+            let dict = Self.dictionary(from: raw)
+            let filled = dict["filled"] as? Bool ?? false
+            let halted = dict["halted"] as? Bool ?? false
+            let captchaPresent = dict["captchaPresent"] as? Bool ?? false
+            let reason = dict["reason"] as? String ?? ""
             if halted {
-                phase = .needsManualAuth("检测到验证码或二次验证，已停止自动填充。请你手动完成登录。")
+                phase = .needsManualAuth("检测到短信或二次验证，已停止自动填充。请你手动完成。")
                 SafeLog.info("Auto-fill halted: \(reason)")
                 return
             }
             if filled {
                 didAttemptAutoFill = true
                 phase = .autoFilled
-                SafeLog.info("Auto-fill completed (no submit)")
+                SafeLog.info("Auto-fill completed (no submit, captchaPresent=\(captchaPresent), reason=\(reason))")
             } else {
                 phase = .readyToParse
                 SafeLog.info("Auto-fill skipped: \(reason)")
@@ -105,21 +108,24 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         var innerText: String?
     }
 
-    private static func decodeExtract(_ raw: Any) -> ExtractedPage {
-        let dict: [String: Any]
+    private static func dictionary(from raw: Any?) -> [String: Any] {
         if let mapped = raw as? [String: Any] {
-            dict = mapped
-        } else if let ns = raw as? NSDictionary {
+            return mapped
+        }
+        if let ns = raw as? NSDictionary {
             var mapped: [String: Any] = [:]
             for (key, value) in ns {
                 if let key = key as? String {
                     mapped[key] = value
                 }
             }
-            dict = mapped
-        } else {
-            dict = [:]
+            return mapped
         }
+        return [:]
+    }
+
+    private static func decodeExtract(_ raw: Any) -> ExtractedPage {
+        let dict = dictionary(from: raw)
         let url = (dict["url"] as? String).flatMap(URL.init(string:))
         let html = dict["html"] as? String ?? ""
         let text = dict["innerText"] as? String
@@ -139,7 +145,13 @@ extension LoginWebViewSession: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         currentURL = webView.url
-        Task { await attemptAutoFillIfNeeded() }
+        Task {
+            await attemptAutoFillIfNeeded()
+            if !didAttemptAutoFill {
+                try? await Task.sleep(nanoseconds: 450_000_000)
+                await attemptAutoFillIfNeeded()
+            }
+        }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {

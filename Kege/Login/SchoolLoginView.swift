@@ -55,7 +55,7 @@ struct SchoolLoginView: View {
         switch session.phase {
         case .idle: "准备打开学校登录页"
         case .loading: "正在加载"
-        case .autoFilled: "已填入学号和密码（未代点登录）"
+        case .autoFilled: "已填入登录名和密码（未填验证码，未点登录）"
         case .needsManualAuth: "请手动完成验证"
         case .readyToParse: "请登录后进入课表页"
         case .parsing: "正在解析本页"
@@ -71,7 +71,7 @@ struct SchoolLoginView: View {
         case .loading:
             "目标 \(SchoolParser.loginURL.absoluteString)"
         case .autoFilled:
-            "请你亲自点「登录」。遇到验证码或二次验证时，应用不会自动点击。"
+            "请输入图形验证码，再亲自点蓝色「登录」。应用不会填写或绕过验证码。"
         case .needsManualAuth(let reason):
             reason
         case .readyToParse:

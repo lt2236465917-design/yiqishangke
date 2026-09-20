@@ -15,6 +15,8 @@
 | IAM HTTP/HTTPS | 从本环境访问 80/443 **TCP 超时**（约 8–25s，0 字节） | 已核实 |
 | 官网 CDN | `https://www.zgysyjy.org.cn` 可 301 到 `index.html` | 已核实 |
 | 常见教务子域 | `jwxt` / `ehall` / `cas` / `yjs` 等 **无 DNS 记录** | 已核实 |
+| 登录页 URL | 用户模拟器打开 `https://iam.zgysyjy.org.cn/am/mLogin/login.html`（`/am/mLogin/` 下带 query 的变体同样进入该页） | 已核实（用户模拟器） |
+| 登录表单 | tab「用户名密码」；登录名 / 密码 / 图形验证码；蓝色登录按钮 | 已核实（用户模拟器） |
 | 登录后课表路径 | 无公开文档、无已登录会话，**未知** | 未核实 |
 
 ## 推断（不是事实）
@@ -27,9 +29,9 @@
 
 主路径实现为：
 
-1. WKWebView 打开 `https://iam.zgysyjy.org.cn`
-2. 自动填账号密码，**不代点登录**
-3. 验证码 / 2FA 停止自动填充
+1. WKWebView 打开 `https://iam.zgysyjy.org.cn/am/mLogin/login.html`
+2. 自动填登录名和密码（可用时先切到「用户名密码」tab），**不填验证码、不代点登录**
+3. 图形验证码由用户手输后再点登录；仅短信/二次验证页（无密码框）才整页停填
 4. 用户进入课表后点「解析本页」，跑 `ZgysyjyParser` 桩
 
 若 IAM 在真机也打不开，或登录后找不到课表页：用 **截图导入**（OCR / 可选识图）。应用不会做云端代登。
