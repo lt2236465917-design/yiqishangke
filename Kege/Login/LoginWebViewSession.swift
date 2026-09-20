@@ -551,14 +551,14 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         let config = WKSnapshotConfiguration()
         config.afterScreenUpdates = true
         let view = activeWebView
-        return try await withCheckedThrowingContinuation { continuation in
-            view.takeSnapshot(with: config) { image, error in
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UIImage, Error>) in
+            view.takeSnapshot(with: config, completionHandler: { image, error in
                 if let image {
                     continuation.resume(returning: image)
                     return
                 }
                 continuation.resume(throwing: error ?? ScreenshotImporterError.invalidImage)
-            }
+            })
         }
     }
 
