@@ -57,19 +57,8 @@ protocol SchoolParsing: Sendable {
 
 /// Heuristic extractor used by the zgysyjy stub and screenshot OCR/AI text.
 enum TimetableHeuristics {
-    /// Common Chinese university 节次 → clock mapping. UNVERIFIED for 中国艺术研究院; used only as fallback.
-    static let periodMap: [Int: (Int, Int)] = [
-        1: (8 * 60, 8 * 60 + 45),
-        2: (8 * 60 + 55, 9 * 60 + 40),
-        3: (10 * 60, 10 * 60 + 45),
-        4: (10 * 60 + 55, 11 * 60 + 40),
-        5: (14 * 60, 14 * 60 + 45),
-        6: (14 * 60 + 55, 15 * 60 + 40),
-        7: (16 * 60, 16 * 60 + 45),
-        8: (16 * 60 + 55, 17 * 60 + 40),
-        9: (19 * 60, 19 * 60 + 45),
-        10: (19 * 60 + 55, 20 * 60 + 40)
-    ]
+    /// zgysyjy weekly-grid clocks (user screenshots). Fallback when a row has 第N节 but no HH:MM.
+    static let periodMap: [Int: (Int, Int)] = ZgysyjyMeeting.periodClock
 
     static func parseClock(_ text: String) -> Int? {
         let pattern = #"(\d{1,2})[:：点时](\d{2})"#
@@ -182,6 +171,103 @@ enum TimetableHeuristics {
             )
         }
         return unique(drafts)
+    }
+
+    static func drafts(fromStructuredJSON text: String) -> [ParsedClassDraft] {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = trimmed.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) else {
+            return []
+        }
+        if let array = object as? [Any] {
+            return unique(drafts(fromJSONObject: array) + array.compactMap(draftFromFlexibleNode))
+        }
+        if let dict = object as? [String: Any] {
+            for key in ["classes", "courses", "sessions", "items", "data"] {
+                if let array = dict[key] as? [Any] {
+                    return unique(array.compactMap(draftFromFlexibleNode))
+                }
+            }
+            if let one = draftFromFlexibleNode(dict) {
+                return [one]
+            }
+        }
+        return unique(drafts(fromJSONObject: object))
+    }
+
+    private static func draftFromFlexibleNode(_ any: Any) -> ParsedClassDraft? {
+        guard let node = any as? [String: Any] else { return nil }
+        func string(_ keys: [String]) -> String? {
+            for key in keys {
+                if let value = node[key] as? String, !value.trimmingCharacters(in: .whitespaces).isEmpty {
+                    return value.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+            return nil
+        }
+        func int(_ keys: [String]) -> Int? {
+            for key in keys {
+                if let value = node[key] as? Int { return value }
+                if let value = node[key] as? String, let n = Int(value) { return n }
+            }
+            return nil
+        }
+        let title = string(["title", "course", "courseName", "name", "kcmc"])
+        guard let title, title.count >= 2, !title.contains("虚拟教室") else { return nil }
+
+        let weekday: ChinaWeekday?
+        if let raw = string(["weekday", "weekDay", "day", "xq"]) {
+            weekday = ChinaWeekday.parseColumnHeader(raw) ?? ChinaWeekday.parse(from: raw)
+        } else if let n = int(["weekday", "weekDay", "day"]) {
+            weekday = ChinaWeekday(rawValue: n == 0 ? 7 : n)
+        } else {
+            weekday = nil
+        }
+        guard let weekday else { return nil }
+
+        var start = 0
+        var end = 0
+        if let startText = string(["start", "startTime", "begin"]),
+           let endText = string(["end", "endTime"]),
+           let s = parseClock(startText),
+           let e = parseClock(endText) {
+            start = s
+            end = e
+        } else if let range = string(["time", "clock"]).flatMap(parseClockRange) {
+            start = range.0
+            end = range.1
+        } else if let period = string(["period", "periodLabel", "section", "jc"]),
+                  let kind = ZgysyjyMeeting.periodKind(from: period) {
+            start = kind.minutes.0
+            end = kind.minutes.1
+        } else {
+            return nil
+        }
+        guard end > start else { return nil }
+
+        var weeks: [Int]?
+        if let list = node["weeks"] as? [Int] {
+            weeks = list
+        } else if let list = node["weeks"] as? [Any] {
+            weeks = list.compactMap { $0 as? Int }
+        } else if let text = string(["weeks", "week", "zcd"]) {
+            weeks = parseWeeks(text.contains("周") ? text : "\(text)周") ?? ZgysyjyMeeting.parseWeeksPrefix(text)
+        }
+
+        let room = string(["location", "room", "place", "classroom"]) ?? ""
+        let campus = string(["campus"]) ?? ""
+        let location = [room, campus].filter { !$0.isEmpty }.joined(separator: " ")
+
+        return ParsedClassDraft(
+            title: title,
+            teacher: string(["teacher", "teacherName", "jsxm"]) ?? "",
+            location: location,
+            weekday: weekday,
+            startMinutes: start,
+            endMinutes: end,
+            weeks: weeks,
+            notes: string(["notes", "remark", "periodLabel"]) ?? ""
+        )
     }
 
     static func drafts(fromJSONObject object: Any) -> [ParsedClassDraft] {

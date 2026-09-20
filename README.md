@@ -32,7 +32,7 @@ Bundle ID：
 2. **立即同步课表**（仅手动）：打开 `https://iam.zgysyjy.org.cn/am/mLogin/login.html` → 自动填登录名和密码（**不填验证码、不代点登录**）→ 你输入图形验证码后点登录。
 3. 登录后 **自行进入课表页**，点右上角 **解析本页**。  
    **课后课表 URL 尚未核实**（见 `docs/portal-spike.md`）。解析不到就用截图导入。
-4. **导入**：相册选课表截图。有开发者识图 Key 时走多模态；否则本机 Vision OCR。
+4. **导入**：相册可一次多选上午/下午/晚上截图，合并去重后写入今日/本周。有开发者识图 Key 时走多模态；否则本机 Vision 按表格位置识别。
 5. **上课提醒**：三档独立开关，可多开——提前 15 分钟 / 3 小时 / 1 天。改课表后全量重建通知。
 6. **主屏幕小组件**：小尺寸「下一节课」、中尺寸「今日剩余」。锁屏组件首版不做。
 
@@ -40,7 +40,7 @@ Bundle ID：
 
 不要提交 Key。任选其一：
 
-- 设置页写入钥匙串（接口根路径默认 `https://api.openai.com/v1`，可改成兼容协议）。
+- 设置页写入钥匙串（默认 DeepSeek：`https://api.deepseek.com`，模型 `deepseek-flash`，官方识图；可改成其它 OpenAI 兼容接口）。
 - 复制 `Config/Secrets.example.plist` 为 `Config/Secrets.local.plist`（已 gitignore），填 `AI_API_KEY`，再把该文件加进 App target。启动时会吸入钥匙串。
 
 识图请求 **只发课表图片**，不发学校账号、密码或 Cookie。
@@ -54,7 +54,7 @@ Bundle ID：
 | `SchoolParser` / `ZgysyjyParser` | zgysyjy 课表解析桩 + 通用表格/JSON/文本启发式 |
 | `ScheduleStore` | 本机 JSON 课表库（App Group） |
 | `SyncCoordinator` | 仅手动同步，写入后重建提醒与小组件 |
-| `ScreenshotImporter` | Vision OCR；有 Key 时优先多模态 |
+| `ScreenshotImporter` | 多图 Vision 网格解析；有 Key 时优先多模态 |
 | `ReminderScheduler` | 按开启档位排程，课表变更重建 |
 | `ScheduleWidgets` | Small / Medium 主屏幕组件 |
 

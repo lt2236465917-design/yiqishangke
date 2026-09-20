@@ -8,16 +8,77 @@ import Foundation
 /// - `3,4周一-下午课-6406(主校区)`
 /// Invalid / skip: `2label.teachtask.courseclass.week.null-排课室`
 ///
-/// Mapping assumptions (school did not publish 节次对照):
+/// Mapping (节次时钟已由用户周课表截图核实；名单表无时钟时用时段默认):
 /// - `周1` / `周一` = Monday … `周7` / `周日` = Sunday
-/// - `上午课` = 08:00–11:40 when the weekly grid has no clock
-/// - `下午课` = 14:00–17:40
-/// - `晚上课` = 19:00–21:00 (not seen yet; reserved)
-/// Weekly grid row clocks like `09:00--12:00` override those defaults.
+/// - `上午课` = 09:00–12:00
+/// - `下午课` = 13:30–16:30
+/// - `晚上课` = 19:00–21:30
+/// - 第一节…第十节见 `periodClock`
+/// Row clocks like `09:00--12:00` override these defaults.
 enum ZgysyjyMeeting {
-    static let morning = (8 * 60, 11 * 60 + 40)
-    static let afternoon = (14 * 60, 17 * 60 + 40)
-    static let evening = (19 * 60, 21 * 60)
+    static let morning = (9 * 60, 12 * 60)
+    static let afternoon = (13 * 60 + 30, 16 * 60 + 30)
+    static let evening = (19 * 60, 21 * 60 + 30)
+
+    /// Verified from weekly-grid screenshots (上午/下午/晚上切片).
+    static let periodClock: [Int: (Int, Int)] = [
+        1: (9 * 60, 9 * 60 + 45),
+        2: (9 * 60 + 45, 10 * 60 + 30),
+        3: (10 * 60 + 30, 11 * 60 + 15),
+        4: (11 * 60 + 15, 12 * 60),
+        5: (13 * 60 + 30, 14 * 60 + 15),
+        6: (14 * 60 + 15, 15 * 60),
+        7: (15 * 60, 15 * 60 + 45),
+        8: (15 * 60 + 45, 16 * 60 + 30),
+        9: (19 * 60, 19 * 60 + 40),
+        10: (20 * 60 + 30, 21 * 60 + 30)
+    ]
+
+    enum PeriodKind: Equatable {
+        case bandMorning
+        case bandAfternoon
+        case bandEvening
+        case numbered(Int)
+
+        var isBand: Bool {
+            switch self {
+            case .numbered: false
+            default: true
+            }
+        }
+
+        var minutes: (Int, Int) {
+            switch self {
+            case .bandMorning: ZgysyjyMeeting.morning
+            case .bandAfternoon: ZgysyjyMeeting.afternoon
+            case .bandEvening: ZgysyjyMeeting.evening
+            case .numbered(let n): ZgysyjyMeeting.periodClock[n] ?? ZgysyjyMeeting.morning
+            }
+        }
+    }
+
+    static func periodKind(from text: String) -> PeriodKind? {
+        let compact = text.replacingOccurrences(of: " ", with: "")
+        if compact.contains("上午") { return .bandMorning }
+        if compact.contains("下午") { return .bandAfternoon }
+        if compact.contains("晚上") || compact.contains("晚课") { return .bandEvening }
+        if let n = numberedPeriod(compact) { return .numbered(n) }
+        return nil
+    }
+
+    static func numberedPeriod(_ text: String) -> Int? {
+        let compact = text.replacingOccurrences(of: " ", with: "")
+        let pattern = #"第\s*([0-9一二三四五六七八九十]+)\s*节"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: compact, range: NSRange(compact.startIndex..., in: compact)),
+              let range = Range(match.range(at: 1), in: compact) else {
+            return nil
+        }
+        let raw = String(compact[range])
+        if let n = Int(raw), (1...12).contains(n) { return n }
+        let map = ["一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10]
+        return map[raw]
+    }
 
     static func isBrokenPlaceholder(_ text: String) -> Bool {
         let t = text.lowercased()
@@ -101,13 +162,22 @@ enum ZgysyjyMeeting {
             .compactMap(parseLine)
     }
 
-    /// Weekly-grid cell: course name / teacher / weeks / room (order inferred).
+    /// Weekly-grid cell: one or more courses (name / teacher / weeks / room).
     static func parseGridCell(
         _ raw: String,
         weekday: ChinaWeekday,
         start: Int,
         end: Int
     ) -> ParsedClassDraft? {
+        parseGridCells(raw, weekday: weekday, start: start, end: end).first
+    }
+
+    static func parseGridCells(
+        _ raw: String,
+        weekday: ChinaWeekday,
+        start: Int,
+        end: Int
+    ) -> [ParsedClassDraft] {
         let lines = raw
             .replacingOccurrences(of: #"<br\s*/?>"#, with: "\n", options: [.regularExpression, .caseInsensitive])
             .replacingOccurrences(of: "\r", with: "\n")
@@ -115,8 +185,34 @@ enum ZgysyjyMeeting {
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
             .filter { !isBrokenPlaceholder($0) }
-        guard !lines.isEmpty else { return nil }
+            .filter { periodKind(from: $0) == nil }
+            .filter { ChinaWeekday.parseColumnHeader($0) == nil }
+            .filter { parseClockRange($0) == nil }
+        guard !lines.isEmpty else { return [] }
 
+        var blocks: [[String]] = []
+        var current: [String] = []
+        for line in lines {
+            let startsNew = looksLikeTitle(line)
+                && current.contains(where: looksLikeTitle)
+                && current.contains(where: { looksLikeRoom($0) || looksLikePersonName($0) || TimetableHeuristics.parseWeeks($0) != nil || weeksFromLooseLine($0) != nil })
+            if startsNew {
+                blocks.append(current)
+                current = [line]
+            } else {
+                current.append(line)
+            }
+        }
+        if !current.isEmpty { blocks.append(current) }
+        return blocks.compactMap { parseBlock($0, weekday: weekday, start: start, end: end) }
+    }
+
+    private static func parseBlock(
+        _ lines: [String],
+        weekday: ChinaWeekday,
+        start: Int,
+        end: Int
+    ) -> ParsedClassDraft? {
         var title = ""
         var teacher = ""
         var location = ""
@@ -124,9 +220,6 @@ enum ZgysyjyMeeting {
         var leftovers: [String] = []
 
         for line in lines {
-            if periodMinutes(from: line) != nil && line.count <= 4 { continue }
-            if ChinaWeekday.parseColumnHeader(line) != nil { continue }
-            if parseClockRange(line) != nil { continue }
             if let parsedWeeks = TimetableHeuristics.parseWeeks(line) ?? weeksFromLooseLine(line) {
                 weeks = parsedWeeks
                 continue
@@ -148,18 +241,17 @@ enum ZgysyjyMeeting {
 
         if title.isEmpty {
             title = leftovers.first(where: looksLikeTitle) ?? leftovers.first ?? ""
-            if let idx = leftovers.firstIndex(of: title) {
-                leftovers.remove(at: idx)
-            }
+            leftovers.removeAll { $0 == title }
         }
         if teacher.isEmpty, let maybe = leftovers.first(where: looksLikePersonName) {
             teacher = maybe
             leftovers.removeAll { $0 == maybe }
         }
         if location.isEmpty {
-            location = leftovers.first(where: looksLikeRoom) ?? leftovers.last ?? ""
+            location = leftovers.first(where: looksLikeRoom) ?? leftovers.last(where: { !$0.isEmpty }) ?? ""
         }
         guard title.count >= 2 else { return nil }
+        if title.contains("虚拟教室") && teacher.isEmpty { return nil }
 
         return ParsedClassDraft(
             title: title,
@@ -176,6 +268,9 @@ enum ZgysyjyMeeting {
     private static func weeksFromLooseLine(_ line: String) -> [Int]? {
         let compact = line.replacingOccurrences(of: " ", with: "")
             .replacingOccurrences(of: "周", with: "")
+        guard compact.range(of: #"^\d{1,2}(?:[-–—,，、]\d{1,2})+$"#, options: .regularExpression) != nil else {
+            return nil
+        }
         return parseWeeksPrefix(compact)
     }
 
@@ -190,7 +285,10 @@ enum ZgysyjyMeeting {
     private static func looksLikeTitle(_ line: String) -> Bool {
         guard line.count >= 2, line.count <= 40 else { return false }
         if looksLikeRoom(line) { return false }
+        if periodKind(from: line) != nil { return false }
+        if TimetableHeuristics.parseWeeks(line) != nil || weeksFromLooseLine(line) != nil { return false }
         if looksLikePersonName(line) && line.count <= 4 { return false }
+        if line.contains("节次") || line.contains("星期") { return false }
         return line.rangeOfCharacter(from: cjkAndLetters) != nil
     }
 

@@ -6,8 +6,13 @@ struct MultimodalAIEngine: Sendable {
     var configuration: AIVisionConfiguration
 
     func recognizeTimetable(image: UIImage) async throws -> String {
+        try await recognizeTimetable(images: [image])
+    }
+
+    func recognizeTimetable(images: [UIImage]) async throws -> String {
         guard configuration.isUsable else { throw ScreenshotImporterError.missingAPIKey }
-        guard let jpeg = image.jpegData(compressionQuality: 0.7) else { throw ScreenshotImporterError.invalidImage }
+        let jpegs = images.compactMap { $0.jpegData(compressionQuality: 0.72) }
+        guard !jpegs.isEmpty else { throw ScreenshotImporterError.invalidImage }
 
         let root = configuration.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard let url = URL(string: "\(root)/chat/completions") else { throw ScreenshotImporterError.aiRejected }
@@ -16,37 +21,32 @@ struct MultimodalAIEngine: Sendable {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(configuration.apiKey)", forHTTPHeaderField: "Authorization")
-        request.timeoutInterval = 60
+        request.timeoutInterval = 90
 
-        let prompt = """
-        你是课表结构化助手。只根据这张课表截图提取课程。
-        只返回 JSON 数组，不要 markdown，不要解释。
-        每项字段：title, teacher, location, weekday (1=周一…7=周日), start (HH:MM), end (HH:MM), weeks (数字数组，未知则省略)。
-        不要索要或回显任何账号、密码、Cookie、Token。
-        """
+        var content: [[String: Any]] = [
+            ["type": "text", "text": Self.userPrompt]
+        ]
+        for jpeg in jpegs {
+            content.append([
+                "type": "image_url",
+                "image_url": [
+                    "url": "data:image/jpeg;base64,\(jpeg.base64EncodedString())",
+                    "detail": "high"
+                ]
+            ])
+        }
 
         let body: [String: Any] = [
             "model": configuration.model,
             "temperature": 0,
             "messages": [
-                ["role": "system", "content": prompt],
-                [
-                    "role": "user",
-                    "content": [
-                        ["type": "text", "text": "提取课表。不要包含任何登录凭证。"],
-                        [
-                            "type": "image_url",
-                            "image_url": [
-                                "url": "data:image/jpeg;base64,\(jpeg.base64EncodedString())"
-                            ]
-                        ]
-                    ]
-                ]
+                ["role": "system", "content": Self.systemPrompt],
+                ["role": "user", "content": content]
             ]
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        SafeLog.info("Sending timetable image to developer vision endpoint (no credentials in payload)")
+        SafeLog.info("Sending \(jpegs.count) timetable image(s) to developer vision endpoint (no credentials in payload)")
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw ScreenshotImporterError.aiRejected
@@ -54,11 +54,34 @@ struct MultimodalAIEngine: Sendable {
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = object["choices"] as? [[String: Any]],
               let message = choices.first?["message"] as? [String: Any],
-              let content = message["content"] as? String else {
+              let contentText = message["content"] as? String else {
             throw ScreenshotImporterError.aiRejected
         }
-        return normalizeJSON(content)
+        return normalizeJSON(contentText)
     }
+
+    static let systemPrompt = """
+    你是课表结构化助手。根据研究生「我的课表」周课表截图提取课程。
+    只返回 JSON，不要 markdown，不要解释。
+    根对象必须是：{"classes":[...]}
+    每项字段：
+    - title (string, 必填)
+    - teacher (string, 可空)
+    - weekday (1-7 或 周一…周日, 必填；1=周一)
+    - periodLabel (string, 如 第一节/上午课, 可空)
+    - startTime (HH:MM, 必填，优先用该行左侧时钟)
+    - endTime (HH:MM, 必填)
+    - weeks (string 如 "6-13" 或 "3,4"，或数字数组)
+    - room (string, 可空)
+    - campus (string, 可空)
+    同一格多门课拆成多项。忽略空格、虚拟教室占位、乱码、表头。不要编造未出现的课。
+    不要索要或回显任何账号、密码、Cookie、Token。
+    """
+
+    static let userPrompt = """
+    这些图是同一周课表的切片（上午/下午/晚上可能分多张）。合并去重后只返回一个 JSON。
+    列=周一…周日，行=上午课/下午课/晚上课或第N节。
+    """
 
     private func normalizeJSON(_ content: String) -> String {
         var text = content.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -66,18 +89,6 @@ struct MultimodalAIEngine: Sendable {
             text = text.replacingOccurrences(of: #"^```(?:json)?"#, with: "", options: .regularExpression)
             text = text.replacingOccurrences(of: #"```$"#, with: "", options: .regularExpression)
             text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        if let data = text.data(using: .utf8),
-           let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-            return array.compactMap { row in
-                let title = row["title"] as? String ?? ""
-                let teacher = row["teacher"] as? String ?? ""
-                let location = row["location"] as? String ?? ""
-                let weekday = row["weekday"] ?? ""
-                let start = row["start"] as? String ?? ""
-                let end = row["end"] as? String ?? ""
-                return "周\(weekday) \(start)-\(end) \(title) 教师:\(teacher) 地点:\(location)"
-            }.joined(separator: "\n")
         }
         return text
     }

@@ -22,6 +22,7 @@
 		BED5803D451C2A0AFD5629B6 /* TimetableHeuristics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E54EFC1DBFE27227F295B99 /* TimetableHeuristics.swift */; };
 		7E4C865CFF7D907431F2BC6D /* ZgysyjyParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = C33B18E43B65B9CA18CDEACF /* ZgysyjyParser.swift */; };
 		3C9E2A1F7B4D80C6E5F2A9B1 /* ZgysyjyMeeting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A7E4C9B2D8F30E5A6B1C4D8 /* ZgysyjyMeeting.swift */; };
+		5F8A2C4D1E9B7036A4D182C0 /* WeeklyGridOCRParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B3C9E1A4D6F2085C1A3E947 /* WeeklyGridOCRParser.swift */; };
 		F9DCD39D9B6228143A6E05CE /* SchoolParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2CC39E6A4C835012E25EE7C /* SchoolParser.swift */; };
 		628AD3F221DE9C4A715489AE /* LoginWebViewSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40F61F7C44C4319B6F651CD /* LoginWebViewSession.swift */; };
 		2AB3CFE32E18094F87C390A2 /* SchoolLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16810328BC6ED77295DAEEF6 /* SchoolLoginView.swift */; };
@@ -96,6 +97,7 @@
 		0E54EFC1DBFE27227F295B99 /* TimetableHeuristics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimetableHeuristics.swift; sourceTree = "<group>"; };
 		C33B18E43B65B9CA18CDEACF /* ZgysyjyParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZgysyjyParser.swift; sourceTree = "<group>"; };
 		1A7E4C9B2D8F30E5A6B1C4D8 /* ZgysyjyMeeting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZgysyjyMeeting.swift; sourceTree = "<group>"; };
+		7B3C9E1A4D6F2085C1A3E947 /* WeeklyGridOCRParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyGridOCRParser.swift; sourceTree = "<group>"; };
 		C2CC39E6A4C835012E25EE7C /* SchoolParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SchoolParser.swift; sourceTree = "<group>"; };
 		B40F61F7C44C4319B6F651CD /* LoginWebViewSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginWebViewSession.swift; sourceTree = "<group>"; };
 		16810328BC6ED77295DAEEF6 /* SchoolLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SchoolLoginView.swift; sourceTree = "<group>"; };
@@ -174,6 +176,7 @@
 			children = (
 				0E54EFC1DBFE27227F295B99 /* TimetableHeuristics.swift */,
 				1A7E4C9B2D8F30E5A6B1C4D8 /* ZgysyjyMeeting.swift */,
+				7B3C9E1A4D6F2085C1A3E947 /* WeeklyGridOCRParser.swift */,
 				C33B18E43B65B9CA18CDEACF /* ZgysyjyParser.swift */,
 				C2CC39E6A4C835012E25EE7C /* SchoolParser.swift */,
 			);
@@ -432,6 +435,7 @@
 				2B646090C33202AAF0ABF8FC /* ReminderScheduler.swift in Sources */,
 				BED5803D451C2A0AFD5629B6 /* TimetableHeuristics.swift in Sources */,
 				3C9E2A1F7B4D80C6E5F2A9B1 /* ZgysyjyMeeting.swift in Sources */,
+				5F8A2C4D1E9B7036A4D182C0 /* WeeklyGridOCRParser.swift in Sources */,
 				7E4C865CFF7D907431F2BC6D /* ZgysyjyParser.swift in Sources */,
 				F9DCD39D9B6228143A6E05CE /* SchoolParser.swift in Sources */,
 				628AD3F221DE9C4A715489AE /* LoginWebViewSession.swift in Sources */,

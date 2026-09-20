@@ -9,8 +9,8 @@ struct SettingsView: View {
     @State private var password = ""
     @State private var hasSavedCredentials = false
     @State private var aiKey = ""
-    @State private var aiBase = "https://api.openai.com/v1"
-    @State private var aiModel = "gpt-4o-mini"
+    @State private var aiBase = AIVisionConfiguration.deepseekBaseURL
+    @State private var aiModel = AIVisionConfiguration.deepseekModel
     @State private var hasAIKey = false
     @State private var banner: String?
 
@@ -122,7 +122,7 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("开发者识图（可选）")
                 .font(KegeTheme.titleFont)
-            Text("有 Key 时截图导入优先走多模态；否则本机 OCR。请求里只发课表图片，不发学校账号。不要把 Key 提交进 git。")
+            Text("默认 DeepSeek（`https://api.deepseek.com`，模型 `deepseek-flash`，官方识图）。有 Key 时截图导入走多模态 JSON；没 Key 才用本机 OCR。请求只发课表图片，不发学校账号。不要把 Key 提交进 git。可改成其它 OpenAI 兼容接口。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             KegeCard {
@@ -226,6 +226,8 @@ struct SettingsView: View {
         do {
             try CredentialsStore.shared.deleteAIConfiguration()
             aiKey = ""
+            aiBase = AIVisionConfiguration.deepseekBaseURL
+            aiModel = AIVisionConfiguration.deepseekModel
             hasAIKey = false
             banner = "已删除识图 Key"
         } catch {

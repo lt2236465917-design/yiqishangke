@@ -72,7 +72,8 @@ struct ClassSession: Codable, Identifiable, Hashable, Sendable {
     }
 
     var identityKey: String {
-        "\(title)|\(weekday.rawValue)|\(startMinutes)|\(endMinutes)|\(location)"
+        let weekKey = (weeks ?? []).map(String.init).joined(separator: ",")
+        return "\(title)|\(weekday.rawValue)|\(startMinutes)|\(endMinutes)|\(location)|\(weekKey)"
     }
 
     static func clockLabel(_ minutes: Int) -> String {

@@ -8,15 +8,15 @@ struct ImportOutcome: Equatable {
 }
 
 protocol ScreenshotRecognizing: Sendable {
-    func recognize(image: UIImage) async throws -> String
+    func recognizeTokens(image: UIImage) async throws -> [OCRToken]
 }
 
 struct VisionOCREngine: ScreenshotRecognizing {
-    func recognize(image: UIImage) async throws -> String {
+    func recognizeTokens(image: UIImage) async throws -> [OCRToken] {
         guard let cg = image.cgImage else { throw ScreenshotImporterError.invalidImage }
         return try await withCheckedThrowingContinuation { continuation in
             var finished = false
-            func finish(_ result: Result<String, Error>) {
+            func finish(_ result: Result<[OCRToken], Error>) {
                 guard !finished else { return }
                 finished = true
                 continuation.resume(with: result)
@@ -27,8 +27,13 @@ struct VisionOCREngine: ScreenshotRecognizing {
                     return
                 }
                 let observations = (req.results as? [VNRecognizedTextObservation]) ?? []
-                let lines = observations.compactMap { $0.topCandidates(1).first?.string }
-                finish(.success(lines.joined(separator: "\n")))
+                let tokens = observations.compactMap { obs -> OCRToken? in
+                    guard let candidate = obs.topCandidates(1).first else { return nil }
+                    let box = obs.boundingBox
+                    let topLeft = CGRect(x: box.minX, y: 1 - box.maxY, width: box.width, height: box.height)
+                    return OCRToken(text: candidate.string, box: topLeft, confidence: candidate.confidence)
+                }
+                finish(.success(tokens))
             }
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
@@ -51,8 +56,8 @@ enum ScreenshotImporterError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .invalidImage: "无法读取这张截图"
-        case .emptyRecognition: "没有识别出文字"
+        case .invalidImage: "无法读取这些截图"
+        case .emptyRecognition: "没有识别出可用的课表格子。请一次选中上午/下午/晚上整页截图。"
         case .aiRejected: "识图接口返回无法解析"
         case .missingAPIKey: "未配置开发者识图 Key，将使用本机 OCR"
         }
@@ -72,49 +77,65 @@ actor ScreenshotImporter {
     }
 
     func importImage(_ image: UIImage) async throws -> ImportOutcome {
+        try await importImages([image])
+    }
+
+    func importImages(_ images: [UIImage]) async throws -> ImportOutcome {
+        guard !images.isEmpty else { throw ScreenshotImporterError.invalidImage }
         let aiConfig = try credentialsStore.loadAIConfiguration()
         if let aiConfig, aiConfig.isUsable {
-            do {
-                let outcome = try await importWithAI(image, config: aiConfig)
-                if !outcome.result.classes.isEmpty { return outcome }
-                SafeLog.info("AI vision returned no classes; falling back to OCR")
-            } catch {
-                SafeLog.error("AI vision failed, falling back to OCR: \(error.localizedDescription)")
-            }
+            let pair = try await recognizeWithAI(images, config: aiConfig)
+            let merged = WeeklyGridOCRParser.mergeAndDedupe(pair.0)
+            guard !merged.isEmpty else { throw ScreenshotImporterError.emptyRecognition }
+            return ImportOutcome(
+                result: ParseResult(
+                    classes: merged,
+                    sourceDescription: "deepseek-vision x\(images.count)",
+                    blocker: nil,
+                    rawExcerpt: String(pair.1.prefix(600))
+                ),
+                engine: "DeepSeek / 多模态"
+            )
         }
-        return try await importWithOCR(image)
-    }
 
-    private func importWithOCR(_ image: UIImage) async throws -> ImportOutcome {
-        let text = try await vision.recognize(image: image)
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw ScreenshotImporterError.emptyRecognition
+        var all: [ParsedClassDraft] = []
+        var excerpts: [String] = []
+        for (index, image) in images.enumerated() {
+            let ocr = try await recognizeWithOCR(image)
+            all.append(contentsOf: ocr.0)
+            excerpts.append("[\(index + 1)/\(images.count)] \(ocr.1)")
         }
-        let drafts = TimetableHeuristics.drafts(fromPlainText: text)
-        let result = ParseResult(
-            classes: drafts,
-            sourceDescription: "vision-ocr",
-            blocker: drafts.isEmpty ? "OCR 未拼出完整课程行，可改用更清晰的课表截图。" : nil,
-            rawExcerpt: String(text.prefix(600))
+        let merged = WeeklyGridOCRParser.mergeAndDedupe(all)
+        guard !merged.isEmpty else { throw ScreenshotImporterError.emptyRecognition }
+        return ImportOutcome(
+            result: ParseResult(
+                classes: merged,
+                sourceDescription: "screenshot-ocr-grid x\(images.count)",
+                blocker: nil,
+                rawExcerpt: String(excerpts.joined(separator: "\n").prefix(600))
+            ),
+            engine: "Vision OCR（未配置 Key）"
         )
-        return ImportOutcome(result: result, engine: "Vision OCR")
     }
 
-    private func importWithAI(_ image: UIImage, config: AIVisionConfiguration) async throws -> ImportOutcome {
+    private func recognizeWithOCR(_ image: UIImage) async throws -> ([ParsedClassDraft], String) {
+        let tokens = try await vision.recognizeTokens(image: image)
+        let text = tokens.map(\.text).joined(separator: "\n")
+        var drafts = WeeklyGridOCRParser.drafts(from: tokens)
+        if drafts.isEmpty {
+            drafts = TimetableHeuristics.drafts(fromPlainText: text)
+        }
+        return (drafts, String(text.prefix(180)))
+    }
+
+    private func recognizeWithAI(_ images: [UIImage], config: AIVisionConfiguration) async throws -> ([ParsedClassDraft], String) {
         let engine = MultimodalAIEngine(configuration: config)
-        let text = try await engine.recognizeTimetable(image: image)
-        var drafts = TimetableHeuristics.drafts(fromPlainText: text)
-        if let data = text.data(using: .utf8),
-           let object = try? JSONSerialization.jsonObject(with: data) {
-            drafts.append(contentsOf: TimetableHeuristics.drafts(fromJSONObject: object))
-            drafts = TimetableHeuristics.unique(drafts)
+        let text = try await engine.recognizeTimetable(images: images)
+        var drafts = TimetableHeuristics.drafts(fromStructuredJSON: text)
+        if drafts.isEmpty {
+            drafts = TimetableHeuristics.drafts(fromPlainText: text)
         }
-        let result = ParseResult(
-            classes: drafts,
-            sourceDescription: "multimodal-ai",
-            blocker: drafts.isEmpty ? "识图模型未返回可解析课表 JSON。" : nil,
-            rawExcerpt: String(text.prefix(600))
-        )
-        return ImportOutcome(result: result, engine: "Multimodal AI")
+        drafts = WeeklyGridOCRParser.mergeAndDedupe(drafts)
+        return (drafts, text)
     }
 }

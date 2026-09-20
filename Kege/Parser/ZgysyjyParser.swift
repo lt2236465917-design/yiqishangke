@@ -204,7 +204,8 @@ struct ZgysyjyParser: SchoolParsing {
 
     private func parseWeeklyGrid(_ table: HTMLTableSlice) -> [ParsedClassDraft]? {
         var dayColumns: [Int: ChinaWeekday] = [:]
-        var drafts: [ParsedClassDraft] = []
+        var numbered: [ParsedClassDraft] = []
+        var bands: [ParsedClassDraft] = []
         for row in table.rows {
             let headerDays = weekdayColumns(row)
             if headerDays.count >= 3 {
@@ -213,15 +214,21 @@ struct ZgysyjyParser: SchoolParsing {
             }
             guard !dayColumns.isEmpty else { continue }
             guard let minutes = rowPeriodMinutes(row) else { continue }
+            let prefix = row.prefix(3).joined(separator: "\n")
+            let kind = ZgysyjyMeeting.periodKind(from: prefix)
             for (col, weekday) in dayColumns {
                 let text = cell(row, col)
                 guard !text.isEmpty else { continue }
                 if ChinaWeekday.parseColumnHeader(text) != nil && text.count <= 8 { continue }
-                if let draft = ZgysyjyMeeting.parseGridCell(text, weekday: weekday, start: minutes.0, end: minutes.1) {
-                    drafts.append(draft)
+                let parsed = ZgysyjyMeeting.parseGridCells(text, weekday: weekday, start: minutes.0, end: minutes.1)
+                if kind?.isBand == true {
+                    bands.append(contentsOf: parsed)
+                } else {
+                    numbered.append(contentsOf: parsed)
                 }
             }
         }
+        let drafts = WeeklyGridOCRParser.mergeAndDedupe(numbered.isEmpty ? bands : numbered)
         return drafts.isEmpty ? nil : drafts
     }
 
@@ -240,6 +247,9 @@ struct ZgysyjyParser: SchoolParsing {
         let prefix = row.prefix(3).joined(separator: "\n")
         if let clock = ZgysyjyMeeting.parseClockRange(prefix) {
             return clock
+        }
+        if let kind = ZgysyjyMeeting.periodKind(from: prefix) {
+            return kind.minutes
         }
         if let period = ZgysyjyMeeting.periodMinutes(from: prefix) {
             return period
