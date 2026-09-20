@@ -10,7 +10,13 @@ struct SchoolLoginView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 statusBanner
-                WebViewContainer(webView: session.webView)
+                ZStack {
+                    WebViewContainer(webView: session.webView)
+                    if let popup = session.popupWebView {
+                        WebViewContainer(webView: popup)
+                            .background(KegeTheme.paper)
+                    }
+                }
             }
             .background(KegeTheme.paper)
             .navigationTitle("学校登录")
@@ -18,6 +24,11 @@ struct SchoolLoginView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("关闭", action: onCancel)
+                }
+                if session.popupWebView != nil {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("关闭新窗口") { session.dismissPopup() }
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("解析本页") {
@@ -75,7 +86,7 @@ struct SchoolLoginView: View {
         case .needsManualAuth(let reason):
             reason
         case .readyToParse:
-            "课后课表地址尚未核实。登录后请进入课表，再点右上角「解析本页」。"
+            "登录后会到应用列表。点「研究生综合管理」进入课表页，再点右上角「解析本页」。新窗口会在本页打开。"
         case .parsing:
             "使用 zgysyjy 解析脚本，不是 AI 点选。"
         case .parsed(let result):

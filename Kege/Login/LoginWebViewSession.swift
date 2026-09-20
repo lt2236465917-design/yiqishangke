@@ -20,19 +20,37 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     @Published var didAttemptAutoFill = false
 
     let webView: WKWebView
+    /// Popup created by `window.open` / `target=_blank` when the request has no concrete URL yet.
+    @Published var popupWebView: WKWebView?
     private let parser: SchoolParsing
     private var credentials: SchoolCredentials?
+
+    static let desktopSafariUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
 
     init(parser: SchoolParsing = ZgysyjyParser()) {
         self.parser = parser
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.defaultWebpagePreferences.allowsContentJavaScript = true
+        config.preferences.javaScriptCanOpenWindowsAutomatically = true
         let webView = WKWebView(frame: .zero, configuration: config)
-        webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        webView.customUserAgent = Self.desktopSafariUA
+        webView.allowsBackForwardNavigationGestures = true
         self.webView = webView
         super.init()
         webView.navigationDelegate = self
+        webView.uiDelegate = self
+    }
+
+    func dismissPopup() {
+        popupWebView?.navigationDelegate = nil
+        popupWebView?.uiDelegate = nil
+        popupWebView?.stopLoading()
+        popupWebView = nil
+    }
+
+    private var activeWebView: WKWebView {
+        popupWebView ?? webView
     }
 
     func start(credentials: SchoolCredentials) {
@@ -40,6 +58,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         didAttemptAutoFill = false
         phase = .loading(SchoolParser.loginURL)
         SafeLog.info("Starting school login WebView (ephemeral). Username \(Redaction.username(credentials.username))")
+        dismissPopup()
         webView.load(URLRequest(url: SchoolParser.loginURL))
     }
 
@@ -50,7 +69,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     func parseCurrentPage() async {
         phase = .parsing
         do {
-            let result = try await webView.evaluateJavaScript(EmbeddedScripts.extractPage)
+            let result = try await activeWebView.evaluateJavaScript(EmbeddedScripts.extractPage)
             let payload = Self.decodeExtract(result)
             let parsed = parser.parse(html: payload.html, pageURL: payload.url, innerText: payload.innerText)
             phase = .parsed(parsed)
@@ -68,7 +87,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         if case .parsing = phase { return }
 
         do {
-            let raw = try await webView.callAsyncJavaScript(
+            let raw = try await activeWebView.callAsyncJavaScript(
                 EmbeddedScripts.autoFill,
                 arguments: [
                     "username": credentials.username,
@@ -134,10 +153,35 @@ final class LoginWebViewSession: NSObject, ObservableObject {
 }
 
 extension LoginWebViewSession: WKNavigationDelegate {
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        preferences: WKWebpagePreferences,
+        decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void
+    ) {
+        preferences.allowsContentJavaScript = true
+        let url = navigationAction.request.url
+        if let url, !PortalNavigation.allows(url, from: webView.url ?? currentURL) {
+            SafeLog.info("Blocked navigation host: \(url.host ?? url.absoluteString)")
+            decisionHandler(.cancel, preferences)
+            return
+        }
+        if navigationAction.targetFrame == nil, let url, PortalNavigation.hasConcreteHTTPURL(url) {
+            webView.load(navigationAction.request)
+            decisionHandler(.cancel, preferences)
+            return
+        }
+        decisionHandler(.allow, preferences)
+    }
+
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         currentURL = webView.url
         if case .needsManualAuth = phase { return }
         if case .parsed = phase { return }
+        if PortalNavigation.isSchoolPortal(webView.url) {
+            phase = .readyToParse
+            return
+        }
         if let url = webView.url {
             phase = .loading(url)
         }
@@ -145,6 +189,11 @@ extension LoginWebViewSession: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         currentURL = webView.url
+        if PortalNavigation.isSchoolPortal(webView.url) {
+            if case .parsed = phase { } else {
+                phase = .readyToParse
+            }
+        }
         Task {
             await attemptAutoFillIfNeeded()
             if !didAttemptAutoFill {
@@ -155,10 +204,101 @@ extension LoginWebViewSession: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled { return }
         phase = .failed("页面加载失败：\(error.localizedDescription)")
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        phase = .failed("无法打开学校登录页：\(error.localizedDescription)。若在校外，可能需要校园网或 VPN。")
+        let ns = error as NSError
+        if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled { return }
+        phase = .failed("无法打开学校页面：\(error.localizedDescription)。若在校外，可能需要校园网或 VPN。")
+    }
+}
+
+extension LoginWebViewSession: WKUIDelegate {
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        if let url = navigationAction.request.url, PortalNavigation.hasConcreteHTTPURL(url) {
+            if PortalNavigation.allows(url, from: webView.url ?? currentURL) {
+                SafeLog.info("Opening portal window in same WebView: \(url.host ?? "")")
+                webView.load(navigationAction.request)
+            } else {
+                SafeLog.info("Blocked popup host: \(url.host ?? url.absoluteString)")
+            }
+            return nil
+        }
+
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+        let child = WKWebView(frame: webView.bounds, configuration: configuration)
+        child.customUserAgent = Self.desktopSafariUA
+        child.allowsBackForwardNavigationGestures = true
+        child.navigationDelegate = self
+        child.uiDelegate = self
+        popupWebView = child
+        SafeLog.info("Created in-sheet child WebView for window.open")
+        return child
+    }
+
+    func webViewDidClose(_ webView: WKWebView) {
+        if webView === popupWebView {
+            dismissPopup()
+        }
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        runJavaScriptAlertPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping () -> Void
+    ) {
+        SafeLog.info("Portal JS alert (not logged as credentials)")
+        completionHandler()
+    }
+}
+
+enum PortalNavigation {
+    static let allowedSuffixes = [
+        "zgysyjy.org.cn",
+        "gscaa.cn"
+    ]
+
+    static func hasConcreteHTTPURL(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased() else { return false }
+        guard scheme == "http" || scheme == "https" else { return false }
+        return url.host?.isEmpty == false
+    }
+
+    static func isSchoolPortal(_ url: URL?) -> Bool {
+        guard let url, let host = url.host?.lowercased() else { return false }
+        guard isAllowedHost(host) else { return false }
+        let path = url.path.lowercased()
+        let fragment = (url.fragment ?? "").lowercased()
+        return path.contains("/portal") || fragment.contains("applist") || fragment.contains("app-list")
+    }
+
+    static func allows(_ url: URL, from current: URL?) -> Bool {
+        let scheme = url.scheme?.lowercased() ?? ""
+        if scheme.isEmpty || ["about", "blob", "data", "javascript"].contains(scheme) {
+            return true
+        }
+        guard scheme == "http" || scheme == "https" else { return false }
+        if isAllowedHost(url.host) { return true }
+        if let current, isAllowedHost(current.host) {
+            SafeLog.info("Allowing hop from school portal to \(url.host ?? "unknown")")
+            return true
+        }
+        return false
+    }
+
+    static func isAllowedHost(_ host: String?) -> Bool {
+        guard let host else { return false }
+        let lowered = host.lowercased()
+        return allowedSuffixes.contains { lowered == $0 || lowered.hasSuffix(".\($0)") }
     }
 }
