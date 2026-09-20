@@ -3,6 +3,16 @@
 探测日期：2026-09-20（Cloud Agent 出口网络）。  
 登录线索：`https://iam.zgysyjy.org.cn`（用户提供）。
 
+## 预定点击路径（门户主路径）
+
+1. 打开 `https://iam.zgysyjy.org.cn/am/mLogin/login.html`，填登录名/密码，用户手输验证码并点登录。
+2. 若落到欢迎/个人中心（`/portal` 但不是 `#/appList`）：改 hash / 点「应用列表」/ 再 load **一次** `https://iam.zgysyjy.org.cn/portal/#/appList`。等 SPA 渲染出磁贴。
+3. 用户点「进入研究生系统」：脚本点「研究生综合管理」（可部分匹配）。`window.open` / 空窗口跟到 IAM SSO，再跳 `wxt.zgysyjy.org.cn:7792`。同一 `WKProcessPool` + 非持久 `WKWebsiteDataStore` 共用 Cookie。**禁止**程序自己 load 无 query 的 `frameset.jsp`。
+4. SSO 落地研究生 frameset 且不是「请登录」：尝试点左侧「我的课表」。点不到则横幅「请点左侧「我的课表」，再点「解析本页」」。
+5. 「解析本页」走 frames/iframes 周课表 + 名单表。
+
+`window.open` 有具体 URL 时在同一 WebView 打开；`about:blank` 再跳转则用子 WebView，仍共用进程 Cookie。
+
 ## SSO 注意（必须）
 
 裸开 `https://wxt.zgysyjy.org.cn:7792/graduate/frameset.jsp` 会显示「请登录 / 数据处理出现错误」（用户核实）。IAM Cookie 不带到 `wxt` 主机。

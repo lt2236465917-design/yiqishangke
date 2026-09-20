@@ -37,13 +37,16 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     private var didRedirectToAppList = false
     private var appListRedirectInFlight = false
     private var urlObservations: [NSKeyValueObservation] = []
+    private let processPool = WKProcessPool()
+    private let dataStore = WKWebsiteDataStore.nonPersistent()
 
     static let desktopSafariUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15"
 
     init(parser: SchoolParsing = ZgysyjyParser()) {
         self.parser = parser
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = .nonPersistent()
+        config.websiteDataStore = dataStore
+        config.processPool = processPool
         config.defaultWebpagePreferences.allowsContentJavaScript = true
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
         let webView = WKWebView(frame: .zero, configuration: config)
@@ -243,6 +246,14 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     private func navigateToAppList(in webView: WKWebView) async {
         if PortalNavigation.isBareGraduateFrameset(webView.url) { return }
         timetableHint = Self.openingAppListHint
+        await applyAppListHash(in: webView)
+        if await waitForAppList(in: webView, attempts: 10) { return }
+        SafeLog.info("Hash did not stick; loading portal appList URL (not frameset)")
+        loadSchoolPage(SchoolParser.portalAppListURL, in: webView)
+        _ = await waitForAppList(in: webView, attempts: 10)
+    }
+
+    private func applyAppListHash(in webView: WKWebView) async {
         do {
             let raw = try await webView.evaluateJavaScript(EmbeddedScripts.goToAppList)
             let dict = Self.dictionary(from: raw)
@@ -250,49 +261,88 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         } catch {
             SafeLog.error("appList hash script: \(error.localizedDescription)")
         }
-        for _ in 0..<8 {
-            try? await Task.sleep(nanoseconds: 280_000_000)
+    }
+
+    /// Hash SPA can lag; wait until location has appList (and tiles if they appear).
+    @discardableResult
+    private func waitForAppList(in webView: WKWebView, attempts: Int) async -> Bool {
+        for step in 0..<attempts {
             await syncURLFromPage(webView)
-            if PortalNavigation.isAppList(currentURL ?? webView.url) {
-                timetableHint = Self.appListSSOHint
-                phase = .readyToParse
-                SafeLog.info("Landed on portal appList")
-                return
+            let probe = await probeAppListTiles(from: webView)
+            let hashReady = PortalNavigation.isAppList(currentURL ?? webView.url) || probe.hashReady
+            if hashReady {
+                if probe.hits > 0 || step >= attempts - 3 {
+                    timetableHint = Self.appListSSOHint
+                    phase = .readyToParse
+                    SafeLog.info("Landed on portal appList tiles=\(probe.hits) step=\(step)")
+                    return true
+                }
+            } else if PortalNavigation.isIAMPostLogin(currentURL ?? webView.url), step == 3 || step == 6 {
+                await applyAppListHash(in: webView)
             }
+            try? await Task.sleep(nanoseconds: 350_000_000)
         }
-        SafeLog.info("Hash did not stick; loading portal appList URL (not frameset)")
-        loadSchoolPage(SchoolParser.portalAppListURL, in: webView)
+        await syncURLFromPage(webView)
+        let ok = PortalNavigation.isAppList(currentURL ?? webView.url)
+        if ok {
+            timetableHint = Self.appListSSOHint
+            phase = .readyToParse
+        }
+        return ok
+    }
+
+    private struct AppListProbe {
+        var hashReady = false
+        var hits = 0
+    }
+
+    private func probeAppListTiles(from webView: WKWebView) async -> AppListProbe {
+        do {
+            let raw = try await webView.evaluateJavaScript(EmbeddedScripts.detectAppListTiles)
+            let dict = Self.dictionary(from: raw)
+            return AppListProbe(
+                hashReady: dict["hashReady"] as? Bool ?? false,
+                hits: Self.intValue(dict["hits"])
+            )
+        } catch {
+            SafeLog.error("appList probe: \(error.localizedDescription)")
+            return AppListProbe()
+        }
     }
 
     private func clickGraduateTile(from webView: WKWebView) async {
         pendingGraduateTileClick = false
         timetableHint = "正在点应用列表里的「研究生综合管理」，以保留门户登录态…"
+        _ = await waitForAppList(in: webView, attempts: 6)
         for attempt in 0..<3 {
             do {
                 let raw = try await webView.evaluateJavaScript(EmbeddedScripts.openGraduateTile)
                 let dict = Self.dictionary(from: raw)
                 let clicked = dict["clicked"] as? Bool ?? false
                 let href = dict["href"] as? String ?? ""
+                let method = dict["method"] as? String ?? ""
+                let scanned = Self.intValue(dict["scanned"])
+                let reason = dict["reason"] as? String ?? ""
+                SafeLog.info("Graduate tile attempt=\(attempt + 1) clicked=\(clicked) method=\(method) scanned=\(scanned) reason=\(reason) hasHref=\(!href.isEmpty)")
                 if let url = PortalNavigation.resolvedSSOURL(href, relativeTo: currentURL ?? webView.url) {
-                    SafeLog.info("Loading discovered SSO host=\(url.host ?? "")")
+                    SafeLog.info("Loading discovered SSO host=\(url.host ?? "") path=\(url.path)")
                     loadSchoolPage(url, in: webView)
                     timetableHint = "已通过门户单点登录跳转。进入课表后点「解析本页」。"
                     return
                 }
                 if clicked {
                     timetableHint = "已尝试点开「研究生综合管理」。等跳转完成后打开「我的课表」，再点「解析本页」。"
-                    SafeLog.info("Clicked graduate tile method=\(dict["method"] as? String ?? "")")
                     return
                 }
             } catch {
-                SafeLog.error("Graduate tile script: \(error.localizedDescription)")
+                SafeLog.error("Graduate tile script attempt=\(attempt + 1): \(error.localizedDescription)")
             }
             if attempt < 2 {
-                try? await Task.sleep(nanoseconds: 400_000_000)
+                try? await Task.sleep(nanoseconds: 650_000_000)
             }
         }
         markSSOBlocked(Self.tileClickFailedHint)
-        SafeLog.info("Graduate tile click not found")
+        SafeLog.info("Graduate tile click not found after retries")
     }
 
     private func finishPendingTileClickIfNeeded(from webView: WKWebView) async {
@@ -329,28 +379,30 @@ final class LoginWebViewSession: NSObject, ObservableObject {
 
     private func openMyTimetableIfPossible(from webView: WKWebView) async {
         await syncURLFromPage(webView)
-        guard PortalNavigation.isGraduateFrameset(currentURL ?? webView.url) else { return }
+        guard PortalNavigation.isGraduateFrameset(currentURL ?? webView.url)
+            || PortalNavigation.isGraduateHost(currentURL ?? webView.url) else { return }
         guard !didClickMyTimetable else { return }
-        didClickMyTimetable = true
-        for attempt in 0..<2 {
+        for attempt in 0..<4 {
             do {
                 let raw = try await webView.evaluateJavaScript(EmbeddedScripts.openMyTimetable)
                 let dict = Self.dictionary(from: raw)
                 if dict["clicked"] as? Bool == true {
+                    didClickMyTimetable = true
                     timetableHint = "已尝试打开「我的课表」。确认左侧高亮且出现课表后再点「解析本页」。"
-                    SafeLog.info("Clicked 我的课表 in graduate frameset")
+                    SafeLog.info("Clicked 我的课表 attempt=\(attempt + 1)")
                     return
                 }
+                SafeLog.info("我的课表 not found attempt=\(attempt + 1)")
             } catch {
-                timetableHint = "请点左侧「我的课表」，再点「解析本页」。"
-                SafeLog.error("我的课表 script error: \(error.localizedDescription)")
+                SafeLog.error("我的课表 script attempt=\(attempt + 1): \(error.localizedDescription)")
             }
-            if attempt == 0 {
-                try? await Task.sleep(nanoseconds: 500_000_000)
+            if attempt < 3 {
+                try? await Task.sleep(nanoseconds: 700_000_000)
             }
         }
-        timetableHint = "未能自动点开「我的课表」。请在左侧菜单亲手点一下，再点「解析本页」。"
-        SafeLog.info("我的课表 click not found")
+        didClickMyTimetable = true
+        timetableHint = "请点左侧「我的课表」，再点「解析本页」。"
+        SafeLog.info("我的课表 click not found; ask user")
     }
 
     func userTappedParseCurrentPage() async {
@@ -434,6 +486,13 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         return [:]
     }
 
+    private static func intValue(_ raw: Any?) -> Int {
+        if let n = raw as? Int { return n }
+        if let n = raw as? NSNumber { return n.intValue }
+        if let d = raw as? Double { return Int(d) }
+        return 0
+    }
+
     private static func decodeExtract(_ raw: Any) -> ExtractedPage {
         let dict = dictionary(from: raw)
         let url = (dict["url"] as? String).flatMap(URL.init(string:))
@@ -452,6 +511,9 @@ extension LoginWebViewSession: WKNavigationDelegate {
     ) {
         preferences.allowsContentJavaScript = true
         let url = navigationAction.request.url
+        if let url, url.host?.lowercased().contains("wxt.zgysyjy.org.cn") == true {
+            SafeLog.info("wxt hop port=\(url.port.map(String.init) ?? "443") path=\(url.path) hasQuery=\(url.query?.isEmpty == false)")
+        }
         if let url, !PortalNavigation.allows(url, from: webView.url ?? currentURL) {
             SafeLog.info("Blocked navigation host: \(url.host ?? url.absoluteString)")
             decisionHandler(.cancel, preferences)
@@ -529,7 +591,7 @@ extension LoginWebViewSession: WKUIDelegate {
     ) -> WKWebView? {
         if let url = navigationAction.request.url, PortalNavigation.hasConcreteHTTPURL(url) {
             if PortalNavigation.allows(url, from: webView.url ?? currentURL) {
-                SafeLog.info("Opening portal window in same WebView: \(url.host ?? "")")
+                SafeLog.info("window.open same WebView host=\(url.host ?? "") port=\(url.port.map(String.init) ?? "-") path=\(url.path)")
                 webView.load(navigationAction.request)
             } else {
                 SafeLog.info("Blocked popup host: \(url.host ?? url.absoluteString)")
@@ -537,7 +599,8 @@ extension LoginWebViewSession: WKUIDelegate {
             return nil
         }
 
-        configuration.websiteDataStore = webView.configuration.websiteDataStore
+        configuration.websiteDataStore = dataStore
+        configuration.processPool = processPool
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
         let child = WKWebView(frame: webView.bounds, configuration: configuration)
@@ -547,7 +610,7 @@ extension LoginWebViewSession: WKUIDelegate {
         child.uiDelegate = self
         popupWebView = child
         observeURL(of: child)
-        SafeLog.info("Created in-sheet child WebView for window.open")
+        SafeLog.info("Created in-sheet child WebView for window.open blank")
         return child
     }
 

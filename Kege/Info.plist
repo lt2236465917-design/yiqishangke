@@ -12,6 +12,8 @@
     <string>课格仅在你选择课表截图时读取相册，用于本机识别课表。</string>
     <key>NSAppTransportSecurity</key>
     <dict>
+        <key>NSAllowsArbitraryLoadsInWebContent</key>
+        <true/>
         <key>NSExceptionDomains</key>
         <dict>
             <key>zgysyjy.org.cn</key>

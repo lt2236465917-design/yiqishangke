@@ -288,8 +288,15 @@ enum EmbeddedScripts {
     static let openGraduateTile = """
     (function() {
       const forbidden = /登录|立即登录|退出|注销/;
-      const result = { clicked: false, text: "", href: "", method: "" };
-      const labelOf = (el) => ((el.innerText || el.textContent || "") + "").replace(/\\s+/g, "");
+      const needles = ["研究生综合管理", "研究生综合", "综合管理信息", "研究生管理信息"];
+      const result = { clicked: false, text: "", href: "", method: "", scanned: 0, reason: "" };
+      const labelOf = (el) => ([
+        el.innerText || el.textContent || "",
+        el.getAttribute("title") || "",
+        el.getAttribute("aria-label") || "",
+        el.getAttribute("alt") || ""
+      ].join(" ")).replace(/\\s+/g, "");
+      const matches = (text) => needles.some((n) => text.indexOf(n) !== -1);
       const attrURL = (el) => el.href || el.getAttribute("href") || el.getAttribute("data-url") || el.getAttribute("data-href") || el.getAttribute("data-link") || "";
       const looksSSO = (u) => {
         if (!u || u.indexOf("javascript:") === 0) return false;
@@ -299,46 +306,92 @@ enum EmbeddedScripts {
       };
       const origOpen = window.open;
       window.open = function(url) {
-        if (url) result.href = String(url);
-        result.method = "window.open";
+        result.href = url ? String(url) : "";
+        result.method = url ? "window.open" : "window.open-blank";
         try { return origOpen.apply(window, arguments); } catch (e) { return null; }
       };
+      try { setTimeout(function() { window.open = origOpen; }, 2000); } catch (e) {}
       const fire = (el) => {
+        const target = el.closest("a, button, li, [role='button'], [class*='app'], [class*='tile']") || el;
         try {
-          el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
-          el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
-          el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
-          el.click();
+          target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, view: window }));
+          target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, view: window }));
+          target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+          target.click();
           return true;
         } catch (e) { return false; }
       };
-      const nodes = Array.from(document.querySelectorAll("a, button, li, div, span, section, p, h1, h2, h3, h4, [role='button'], [class*='app'], [class*='tile']"));
-      const tiles = nodes.filter((el) => {
-        const text = labelOf(el);
-        if (!text || text.length > 36 || forbidden.test(text)) return false;
-        return text.indexOf("研究生综合管理") !== -1;
-      }).sort((a, b) => labelOf(a).length - labelOf(b).length);
-      for (const el of tiles) {
-        const href = attrURL(el);
-        if (looksSSO(href)) result.href = href;
-        if (fire(el)) {
-          result.clicked = true;
-          result.text = labelOf(el);
-          result.method = result.method || "click";
-          break;
-        }
-      }
+      const seen = [];
+      const walk = (win) => {
+        try {
+          const href = win.location.href;
+          if (seen.indexOf(href) !== -1) return false;
+          seen.push(href);
+          const doc = win.document;
+          const nodes = Array.from(doc.querySelectorAll("a, button, li, div, span, section, p, h1, h2, h3, h4, img, [role='button'], [class*='app'], [class*='tile']"));
+          result.scanned += nodes.length;
+          const tiles = nodes.filter((el) => {
+            const text = labelOf(el);
+            if (!text || text.length > 48 || forbidden.test(text)) return false;
+            return matches(text);
+          }).sort((a, b) => labelOf(a).length - labelOf(b).length);
+          for (const el of tiles) {
+            const hrefAttr = attrURL(el);
+            if (looksSSO(hrefAttr)) result.href = hrefAttr;
+            if (fire(el)) {
+              result.clicked = true;
+              result.text = labelOf(el).slice(0, 24);
+              result.method = result.method || "click";
+              return true;
+            }
+          }
+          const kids = [];
+          try { for (let i = 0; i < win.frames.length; i += 1) kids.push(win.frames[i]); } catch (e) {}
+          try {
+            doc.querySelectorAll("iframe, frame").forEach((el) => {
+              try { if (el.contentWindow) kids.push(el.contentWindow); } catch (e2) {}
+            });
+          } catch (e) {}
+          for (const child of kids) {
+            try { if (walk(child)) return true; } catch (e) {}
+          }
+        } catch (e) {}
+        return false;
+      };
+      walk(window);
       if (!result.href) {
         const html = document.documentElement ? document.documentElement.innerHTML : "";
-        const idx = html.indexOf("研究生综合管理");
-        const slice = idx === -1 ? html : html.slice(Math.max(0, idx - 500), idx + 900);
+        let idx = -1;
+        for (const n of needles) {
+          idx = html.indexOf(n);
+          if (idx !== -1) break;
+        }
+        const slice = idx === -1 ? html.slice(0, 1200) : html.slice(Math.max(0, idx - 500), idx + 900);
         const found = slice.match(/https?:\\/\\/[^\\s"'<>]+/g) || [];
         for (const u of found) {
           if (looksSSO(u)) { result.href = u; result.method = result.method || "scan"; break; }
         }
       }
-      window.open = origOpen;
+      if (!result.clicked && !result.href) {
+        result.reason = result.scanned === 0 ? "no-nodes" : "no-tile-text";
+      }
       return result;
+    })();
+    """
+
+    static let detectAppListTiles = """
+    (function() {
+      const t = ((document.body && document.body.innerText) || "").replace(/\\s+/g, "");
+      const href = String(location.href);
+      const needles = ["研究生综合管理", "研究生综合", "综合管理信息", "应用列表"];
+      let hits = 0;
+      needles.forEach((n) => { if (t.indexOf(n) !== -1) hits += 1; });
+      return {
+        href: href,
+        hashReady: /applist|app-list/i.test(href),
+        hits: hits,
+        ready: hits > 0 && /applist|app-list/i.test(href)
+      };
     })();
     """
 
