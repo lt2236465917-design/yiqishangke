@@ -7,7 +7,7 @@
 
 1. 打开 `https://iam.zgysyjy.org.cn/am/mLogin/login.html`，填登录名/密码，用户手输验证码并点登录。
 2. 若落到欢迎/个人中心（`/portal` 但不是 `#/appList`）：改 hash / 点「应用列表」/ 再 load **一次** `https://iam.zgysyjy.org.cn/portal/#/appList`。等 SPA 渲染出磁贴。
-3. 用户点「进入研究生系统」：脚本点「研究生综合管理」（可部分匹配）。`window.open` / 空窗口跟到 IAM SSO，再跳 `wxt.zgysyjy.org.cn:7792`。同一 `WKProcessPool` + 非持久 `WKWebsiteDataStore` 共用 Cookie。**禁止**程序自己 load 无 query 的 `frameset.jsp`。
+3. 用户在应用列表亲手点「研究生综合管理」磁贴。`window.open` / 空窗口跟到 IAM SSO，再跳 `wxt.zgysyjy.org.cn:7792`。同一 `WKProcessPool` + 非持久 `WKWebsiteDataStore` 共用 Cookie。**禁止**程序自己 load 无 query 的 `frameset.jsp`。应用不再提供「进入研究生系统」按钮。
 4. SSO 落地研究生 frameset 且不是「请登录」：尝试点左侧「我的课表」，并用 `scrollIntoView` / 轻微 `pageZoom` 把菜单滚入视野。点不到则横幅「请点左侧「我的课表」，再点「录入课表」」。
 5. 「录入课表」优先抽取 frameset/iframe 里的周课表 HTML 表格并结构化解析；只有表格为空才允许一次截图识图兜底。核对清单确认后才写入。
 
@@ -17,7 +17,7 @@
 
 裸开 `https://wxt.zgysyjy.org.cn:7792/graduate/frameset.jsp` 会显示「请登录 / 数据处理出现错误」（用户核实）。IAM Cookie 不带到 `wxt` 主机。
 
-正确路径：IAM 登录 → 若落到「欢迎您」个人中心，应用**自动打开一次** `https://iam.zgysyjy.org.cn/portal/#/appList`（hash SPA）→ 点应用列表「研究生综合管理」磁贴（门户 SSO / 带 ticket 的 URL）→ 研究生系统落地 frameset → 左侧「我的课表」→「录入课表」（快照 + 识图，核对后写入）。
+正确路径：IAM 登录 → 若落到「欢迎您」个人中心，应用**自动打开一次** `https://iam.zgysyjy.org.cn/portal/#/appList`（hash SPA）→ 点应用列表「研究生综合管理」磁贴（门户 SSO / 带 ticket 的 URL）→ 研究生系统落地 frameset → 左侧「我的课表」→「录入课表」（HTML/DOM 表格解析，核对后写入）。
 
 `/portal` 个人中心 **不是** 应用列表。不要把欢迎页当成磁贴页。应用不会 `load` 裸 frameset。磁贴点失败会提示改用截图导入。
 
@@ -51,7 +51,7 @@
 
 ## 「我的课表」解析契约
 
-门户「录入课表」：截取 WebView 可见周课表（优先网格），用与截图导入相同的 JSON 契约交给已配置的多模态模型（默认 DeepSeek `deepseek-flash`，设置页可改）。提示词要求忽略导航、标签噪音和损坏的 i18n 键。失败最多 5 次，按课名+星期+时间+教室+周次合并去重；仍失败则提示最终错误，不会无限重试。识别后用紧凑清单对照网页课表，**不会自动写入**；点「写入本机课表」才落盘。「导入后替换本机课表」默认关闭。学校 HTML 表格解析仍保留为非主路径。未把真实截图或学生课名写入仓库。
+门户「录入课表」：在 frameset / iframe 里抽取周课表 `<table>`（优先网格行的节次时钟），用 `ZgysyjyParser` 结构化。表格乱或只剩「上午课」整段时，可用纯文本 LLM 整理（不发截图）。仍空才允许**一次**截图识图兜底。相册多图 DeepSeek 只在「导入」页。识别后用紧凑清单对照网页课表，**不会自动写入**；点「写入本机课表」才落盘。「导入后替换本机课表」默认关闭。未把真实截图或学生课名写入仓库。
 
 时间字符串映射（节次时钟已由用户周课表截图核实，无课程名）：
 
@@ -91,7 +91,7 @@
 2. 自动填登录名和密码（可用时先切到「用户名密码」tab），**不填验证码、不代点登录**
 3. 图形验证码由用户手输后再点登录；仅短信/二次验证页（无密码框）才整页停填
 4. 登录后若落到欢迎/个人中心，**自动打开一次** `/portal/#/appList`（改 hash，必要时再 load）。不要打开裸 frameset。个人中心没有磁贴。
-5. 「进入研究生系统」只在真正的应用列表顶栏出现（与右上角「录入课表」并存）。不要在 WebView 底部再叠一套按钮。欢迎页只显示一条说明，应用自动打开一次 appList。
+5. 右上角「录入课表」只在「我的课表」周视图有用。应用列表 / 登录页 / 课程详情名单没有周课表格时直接报错，不弹出空核对清单。
 6. 磁贴失败或研究生页「请登录」：明确提示改用截图，不再跳裸 frameset
 7. 「录入课表」优先 HTML/DOM 周课表 → 核对清单 → 用户确认写入。表格失败才一次截图兜底。相册 DeepSeek 仍在导入页。
 

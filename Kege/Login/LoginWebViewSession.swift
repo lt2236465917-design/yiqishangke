@@ -159,10 +159,11 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         }
     }
 
-    static let appListSSOHint = "请点应用列表里的研究生综合管理；直达裸开会丢登录态"
+    static let appListSSOHint = "点应用列表里的「研究生综合管理」，再进「我的课表」后点「录入课表」。"
     static let openingAppListHint = "已登录。正在打开应用列表（个人中心没有研究生磁贴）。"
-    static let tileClickFailedHint = "未能点开「研究生综合管理」。请亲手点应用列表里的磁贴。点不开或出现「请登录」时，请关闭本页，改用「导入」里的截图。"
-    static let loginWallHint = "研究生系统在要登录，说明没带上门户会话。不要直达裸 frameset。请关闭本页，改用「导入」里的截图。"
+    static let tileClickFailedHint = "请亲手点应用列表里的「研究生综合管理」。点不开或出现「请登录」时，请关闭本页，改用「导入」里的截图。"
+    static let loginWallHint = "研究生系统在要登录，说明没带上门户会话。请回到应用列表点「研究生综合管理」。仍失败请改用「导入」截图。"
+    static let weekGridMissingHint = "未在当前页找到周课表表格，请先打开「我的课表」周视图后再点录入。"
 
     private func markSSOBlocked(_ message: String) {
         ssoBlocked = true
@@ -460,28 +461,39 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         captureEngine = ""
         captureAttempt = 1
         timetableHint = "正在从网页表格提取课表。识别后需你核对，不会自动写入。"
+
+        if shouldRefuseCaptureOnCurrentPage() {
+            failCapture(Self.weekGridMissingHint)
+            return
+        }
+
         await revealMyTimetableMenu(from: activeWebView)
         await revealWeeklyGrid(from: activeWebView)
         try? await Task.sleep(nanoseconds: 280_000_000)
+
+        if shouldRefuseCaptureOnCurrentPage() {
+            failCapture(Self.weekGridMissingHint)
+            return
+        }
 
         let payload: ExtractedPage
         do {
             payload = try await extractScheduleDOM()
         } catch {
             SafeLog.error("DOM extract: \(error.localizedDescription)")
-            await finishCaptureWithOptionalSnapshotFallback(
-                reason: "无法读取课表网页：\(error.localizedDescription)",
-                loginWall: false
-            )
+            failCapture(Self.weekGridMissingHint)
             return
         }
 
         let blob = payload.html + (payload.innerText ?? "")
         if Self.isLoginWallText(blob) {
-            let message = Self.loginWallHint
-            phase = .failed(message)
-            timetableHint = message
+            failCapture(Self.loginWallHint)
             SafeLog.info("Portal HTML extract hit login wall")
+            return
+        }
+        if looksLikePortalOrCatalog(blob) {
+            failCapture(Self.weekGridMissingHint)
+            SafeLog.info("Portal HTML extract refused: not a week grid")
             return
         }
 
@@ -489,7 +501,7 @@ final class LoginWebViewSession: NSObject, ObservableObject {
         parsed.classes = WeeklyGridOCRParser.mergeAndDedupe(parsed.classes)
         var engine = "HTML 周课表"
 
-        if shouldTryTextCleanup(parsed, pageText: payload.innerText ?? blob) {
+        if shouldTryTextCleanup(parsed, pageText: payload.innerText ?? blob), looksLikeWeekGrid(blob) {
             if let cleaned = await textOnlyLLMDrafts(from: payload.innerText ?? payload.html) {
                 let merged = WeeklyGridOCRParser.mergeAndDedupe(parsed.classes + cleaned)
                 if !merged.isEmpty {
@@ -499,19 +511,46 @@ final class LoginWebViewSession: NSObject, ObservableObject {
             }
         }
 
-        if !parsed.classes.isEmpty, !looksCollapsedToMorningBand(parsed.classes, pageText: payload.innerText ?? blob) {
-            finishCaptureSuccess(parsed, engine: engine)
-            return
-        }
         if !parsed.classes.isEmpty {
             finishCaptureSuccess(parsed, engine: engine)
             return
         }
 
-        await finishCaptureWithOptionalSnapshotFallback(
-            reason: parsed.blocker ?? "网页表格未解析到课程。请确认已打开「我的课表」，或改用导入页截图。",
-            loginWall: false
-        )
+        if looksLikeWeekGrid(blob) {
+            await finishCaptureWithOptionalSnapshotFallback(
+                reason: Self.weekGridMissingHint,
+                loginWall: false
+            )
+            return
+        }
+        failCapture(Self.weekGridMissingHint)
+    }
+
+    private func shouldRefuseCaptureOnCurrentPage() -> Bool {
+        if isOnAppList || isOnWelcome { return true }
+        if PortalNavigation.isLoginPage(currentURL ?? activeWebView.url) { return true }
+        return false
+    }
+
+    private func looksLikeWeekGrid(_ text: String) -> Bool {
+        let hasDays = text.contains("周一") && (text.contains("周二") || text.contains("周日") || text.contains("周三"))
+        let hasPeriod = text.contains("上午课") || text.contains("下午课") || text.contains("第一节") || text.contains("第1节")
+        return hasDays && hasPeriod
+    }
+
+    private func looksLikePortalOrCatalog(_ text: String) -> Bool {
+        if looksLikeWeekGrid(text) { return false }
+        if text.contains("全部应用") || text.contains("研究生综合管理") { return true }
+        if text.contains("课程详情") { return true }
+        if text.contains("课程名称") && text.contains("学分") && !text.contains("周一") { return true }
+        return false
+    }
+
+    private func failCapture(_ message: String) {
+        captureEngine = ""
+        phase = .failed(message)
+        timetableHint = message
+        SafeLog.info("Portal capture refused: \(message)")
     }
 
     private func extractScheduleDOM() async throws -> ExtractedPage {
@@ -562,6 +601,10 @@ final class LoginWebViewSession: NSObject, ObservableObject {
     }
 
     private func finishCaptureSuccess(_ parsed: ParseResult, engine: String) {
+        guard !parsed.classes.isEmpty else {
+            failCapture(Self.weekGridMissingHint)
+            return
+        }
         captureEngine = engine
         let result = ParseResult(
             classes: parsed.classes,

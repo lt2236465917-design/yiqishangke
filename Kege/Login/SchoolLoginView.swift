@@ -3,7 +3,7 @@ import SwiftUI
 
 struct SchoolLoginView: View {
     /// Shown in the login banner so a stale App install is obvious.
-    static let loginSheetStamp = "174f1d2"
+    static let loginSheetStamp = "PENDING"
 
     @ObservedObject var session: LoginWebViewSession
     @EnvironmentObject private var settings: SettingsStore
@@ -54,6 +54,8 @@ struct SchoolLoginView: View {
                         .sorted(by: EditableClassDraft.checklistOrder)
                     didWrite = false
                     showingConfirm = true
+                } else {
+                    showingConfirm = false
                 }
             }
             .sheet(isPresented: $showingConfirm) {
@@ -79,7 +81,7 @@ struct SchoolLoginView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    /// One strip above the WebView. The graduate-entry button lives here on appList only.
+    /// One strip above the WebView. User opens 研究生综合管理 from the portal tile.
     private var singleInstructionBanner: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(verbatim: bannerLine)
@@ -88,17 +90,6 @@ struct SchoolLoginView: View {
             Text(verbatim: "build \(Self.loginSheetStamp)")
                 .font(.caption2.monospaced())
                 .foregroundStyle(.tertiary)
-            if session.isOnAppList {
-                Button {
-                    session.openGraduateManagement()
-                } label: {
-                    Text(verbatim: "进入研究生系统")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(KegeTheme.accent)
-            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -173,7 +164,7 @@ struct SchoolLoginView: View {
         NavigationStack {
             ScrollView {
                 ScheduleImportChecklist(
-                    engine: session.captureEngine.isEmpty ? "门户快照" : session.captureEngine,
+                    engine: session.captureEngine.isEmpty ? "HTML 周课表" : session.captureEngine,
                     drafts: drafts,
                     didWrite: didWrite,
                     replaceOnImport: $settings.replaceOnImport,
