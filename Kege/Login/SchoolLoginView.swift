@@ -3,7 +3,7 @@ import SwiftUI
 
 struct SchoolLoginView: View {
     /// Shown in the login banner so a stale App install is obvious.
-    static let loginSheetStamp = "PENDING"
+    static let loginSheetStamp = "9f2990a"
 
     @ObservedObject var session: LoginWebViewSession
     @EnvironmentObject private var settings: SettingsStore
@@ -58,7 +58,10 @@ struct SchoolLoginView: View {
                     showingConfirm = false
                 }
             }
-            .sheet(isPresented: $showingConfirm) {
+            .sheet(isPresented: Binding(
+                get: { showingConfirm && !drafts.isEmpty },
+                set: { showingConfirm = $0 }
+            )) {
                 confirmationSheet
             }
         }
